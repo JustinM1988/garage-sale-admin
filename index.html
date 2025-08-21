@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Garage Sale Admin — v3.1</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
+    <link rel="stylesheet" href="./styles.css?v=3.1">
+  </head>
+  <body>
+    <header class="appbar glass">
+      <div class="brand">
+        <div class="logo">GS</div>
+        <h1>Garage Sale Admin</h1>
+      </div>
+      <div class="actions">
+        <button id="btnSales" class="btn btn-secondary">Sales</button>
+        <button id="btnGuide" class="btn btn-secondary">Guide</button>
+        <button id="btnSignIn" class="btn">Sign in</button>
+        <button id="btnSignOut" class="btn btn-secondary" style="display:none;">Sign out</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel form-panel glass">
+        <div class="section-title">Edit / Add Sale</div>
+
+        <div class="field-row">
+          <label for="address">Address</label>
+          <input id="address" type="text" placeholder="e.g., 1024 Ocean Breeze St" />
+        </div>
+
+        <div class="grid-2">
+          <div class="field-row">
+            <label for="dateStart">Start Date</label>
+            <input id="dateStart" type="date" />
+          </div>
+          <div class="field-row">
+            <label for="dateEnd">End Date</label>
+            <input id="dateEnd" type="date" />
+          </div>
+        </div>
+
+        <div class="section-subtitle">Time range</div>
+        <div class="grid-4">
+          <div class="field-row">
+            <label for="timeStartHour">Start</label>
+            <div class="time-row">
+              <input id="timeStartHour" type="number" min="1" max="12" placeholder="9" />
+              <span>:</span>
+              <input id="timeStartMin" type="number" min="0" max="59" placeholder="00" />
+              <select id="timeStartAmPm">
+                <option>AM</option>
+                <option>PM</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <label for="timeEndHour">End</label>
+            <div class="time-row">
+              <input id="timeEndHour" type="number" min="1" max="12" placeholder="2" />
+              <span>:</span>
+              <input id="timeEndMin" type="number" min="0" max="59" placeholder="00" />
+              <select id="timeEndAmPm">
+                <option>AM</option>
+                <option selected>PM</option>
+              </select>
+            </div>
+          </div>
+          <div></div>
+          <div class="field-row">
+            <label class="checkbox">
+              <input id="chkCompose" type="checkbox" checked /> Compose Description from time + details
+            </label>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label for="details">Sale details</label>
+          <textarea id="details" placeholder="What’s for sale? e.g., A Sofa, Dining Room Set, tools ..."></textarea>
+        </div>
+
+        <div class="field-row">
+          <label for="descriptionRaw">Description (saved to layer)</label>
+          <textarea id="descriptionRaw" placeholder="Will auto-fill from time + details"></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button id="btnNew" class="btn btn-secondary">New</button>
+          <button id="btnCancel" class="btn btn-secondary" style="display:none;">Cancel</button>
+          <div class="spacer"></div>
+          <button id="btnDelete" class="btn btn-danger">Delete</button>
+          <button id="btnSave" class="btn">Save</button>
+        </div>
+
+        <div id="status" class="status">Click a sale to edit, or click the map to place a new one.</div>
+        <footer class="status">UI version v3.1. If you don’t see changes, hard refresh (Ctrl/Cmd+Shift+R).</footer>
+      </section>
+
+      <section class="panel map-panel glass">
+        <div id="map" class="map"></div>
+        <div id="mapFooter" class="map-footer">
+          <span id="coords">Lon: — • Lat: —</span>
+          <span class="hint">Tip: Search an address, then click to fine‑tune.</span>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast & Modal templates -->
+    <template id="toastTpl">
+      <div class="toast glass"><span class="toast-text"></span></div>
+    </template>
+
+    <template id="modalTpl">
+      <div class="modal-backdrop">
+        <div class="modal glass">
+          <div class="modal-header">
+            <div class="modal-title"></div>
+            <button class="modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="modal-body"></div>
+          <div class="modal-actions"></div>
+        </div>
+      </div>
+    </template>
+
+    <script type="module" src="./app.js?v=3.1"></script>
+  </body>
+</html>
