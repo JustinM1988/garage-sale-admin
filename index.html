@@ -3,16 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Garage Sale Admin (Front‑End Only)</title>
-    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css">
+    <title>Garage Sale Admin — Neon</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <header class="appbar">
+    <header class="appbar glass">
       <div class="brand">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-          <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5v6l5 3-.75 1.23L11 14V7h2z" fill="currentColor"/>
-        </svg>
+        <div class="logo">GS</div>
         <h1>Garage Sale Admin</h1>
       </div>
       <div class="actions">
@@ -22,7 +20,7 @@
     </header>
 
     <main class="layout">
-      <section class="panel form-panel">
+      <section class="panel form-panel glass">
         <div class="section-title">Edit / Add Sale</div>
 
         <div class="field-row">
@@ -92,23 +90,22 @@
           <button id="btnSave" class="btn">Save</button>
         </div>
 
-        <div id="status" class="status">Click a point to edit, or click the map to place a new one. Use search on the map.</div>
+        <div id="status" class="status">Click a sale to edit, or click the map to place a new one.</div>
       </section>
 
-      <section class="panel map-panel">
+      <section class="panel map-panel glass">
         <div id="map" class="map"></div>
         <div id="mapFooter" class="map-footer">
           <span id="coords">Lon: — • Lat: —</span>
-          <span class="hint">Tip: Use the search box to find an address, then click to fine‑tune.</span>
+          <span class="hint">Tip: Search an address, then click to fine‑tune.</span>
         </div>
       </section>
     </main>
 
     <template id="toastTpl">
-      <div class="toast"><span class="toast-text"></span></div>
+      <div class="toast glass"><span class="toast-text"></span></div>
     </template>
 
-    <!-- ESM app -->
     <script type="module" src="./app.js"></script>
   </body>
 </html>
