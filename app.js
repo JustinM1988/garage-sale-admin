@@ -1,4 +1,4 @@
-// Sleek Neon build — front-end only editor for one Hosted Feature Layer
+// V3: center modals, splash guide, sales list, lighter dark theme, dropdown fix
 const CONFIG = {
   LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL: "https://www.arcgis.com",
@@ -7,12 +7,7 @@ const CONFIG = {
   ZOOM: 13
 };
 
-const FIELDS = {
-  address: "Address",
-  description: "Description",
-  start: "Date_1",
-  end: "EndDate"
-};
+const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
 import Map from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
 import MapView from "https://js.arcgis.com/4.29/@arcgis/core/views/MapView.js";
@@ -24,7 +19,27 @@ import OAuthInfo from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 const $ = (sel) => document.querySelector(sel);
-function toast(msg){ const n=document.getElementById("toastTpl").content.cloneNode(true).firstElementChild; n.querySelector(".toast-text").textContent=msg; document.body.appendChild(n); setTimeout(()=>n.remove(),2500);}
+function toast(msg){ const n=document.getElementById("toastTpl").content.cloneNode(true).firstElementChild; n.querySelector(".toast-text").textContent=msg; document.body.appendChild(n); setTimeout(()=>n.remove(),2400);}
+
+function openModal({title, html, actions=[{label:"Close"}]}){
+  return new Promise((resolve)=>{
+    const tpl = document.getElementById("modalTpl").content.cloneNode(true);
+    const root = tpl.querySelector(".modal-backdrop");
+    tpl.querySelector(".modal-title").textContent = title || "";
+    const body = tpl.querySelector(".modal-body"); body.innerHTML = html || "";
+    const acts = tpl.querySelector(".modal-actions"); acts.innerHTML = "";
+    actions.forEach((a,i)=>{
+      const b = document.createElement("button");
+      b.className = "btn" + (a.variant ? " " + a.variant : "");
+      b.textContent = a.label || "OK";
+      b.addEventListener("click", ()=>{ root.remove(); resolve(a.value ?? i); });
+      acts.appendChild(b);
+    });
+    tpl.querySelector(".modal-close").addEventListener("click", ()=>{ root.remove(); resolve(null); });
+    document.body.appendChild(root);
+  });
+}
+
 function toEpoch(s){ if(!s) return null; const d=new Date(s); return isNaN(d)?null:d.getTime();}
 function fromEpoch(ms){ if(!ms) return ""; const d=new Date(ms); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function cleanInt(v,min,max){ const n=parseInt(v,10); if(isNaN(n)) return null; return Math.max(min,Math.min(max,n)); }
@@ -65,35 +80,43 @@ async function init(){
     const ht = await view.hitTest(ev);
     const g = ht.results.find(r=> r.graphic?.layer === layer)?.graphic;
     if (g){ loadForEdit(g); }
-    else { placePoint(ev.mapPoint.longitude, ev.mapPoint.latitude); selectedFeature=null; setStatus("New sale — place set, fill info then Save."); }
+    else { placePoint(ev.mapPoint.longitude, ev.mapPoint.latitude); selectedFeature=null; setStatus("New sale — point placed. Fill the form and Save."); }
   });
 
   $("#btnSave").addEventListener("click", onSave);
   $("#btnNew").addEventListener("click", clearForm);
   $("#btnDelete").addEventListener("click", onDelete);
 
+  $("#btnSales").addEventListener("click", showSalesList);
+  $("#btnGuide").addEventListener("click", showGuide);
+
   $("#btnSignIn").addEventListener("click", async ()=>{
-    try{ await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; $("#btnSignIn").style.display="none"; $("#btnSignOut").style.display="inline-block"; toast("Signed in.");}
+    try{ await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; $("#btnSignIn").style.display="none"; $("#btnSignOut").style.display="inline-block"; toast("Signed in."); updateAuthUI();}
     catch(e){ toast("Sign-in cancelled.");}
   });
-  $("#btnSignOut").addEventListener("click", ()=>{ esriId.destroyCredentials(); signedIn=false; $("#btnSignIn").style.display="inline-block"; $("#btnSignOut").style.display="none"; toast("Signed out."); });
+  $("#btnSignOut").addEventListener("click", ()=>{ esriId.destroyCredentials(); signedIn=false; $("#btnSignIn").style.display="inline-block"; $("#btnSignOut").style.display="none"; toast("Signed out."); updateAuthUI(); });
 
   ["timeStartHour","timeStartMin","timeStartAmPm","timeEndHour","timeEndMin","timeEndAmPm","details","chkCompose"].forEach(id=> $("#"+id).addEventListener("input", syncDesc));
   syncDesc();
 
-  // If sign-in required, disable save/delete until logged in
   updateAuthUI();
 
   view.watch("center", ()=>{ const c=view.center; $("#coords").textContent=`Lon: ${c.longitude.toFixed(5)} • Lat: ${c.latitude.toFixed(5)}`; });
 
   setStatus("Click an existing sale to edit, or click map to add a new one.");
+
+  // Splash/guide on first load
+  if (!localStorage.getItem("gs_admin_v3_seen")){
+    await showGuide();
+    localStorage.setItem("gs_admin_v3_seen","1");
+  }
 }
 
 function updateAuthUI(){
   const needsAuth = !!CONFIG.OAUTH_APPID;
   $("#btnSave").disabled = needsAuth && !signedIn;
   $("#btnDelete").disabled = needsAuth && !signedIn;
-  if (needsAuth) $("#status").textContent = (signedIn ? "Authenticated." : "Sign in to save changes.");
+  if (needsAuth && !signedIn) setStatus("Sign in to save changes.");
 }
 
 function setStatus(t){ $("#status").textContent = t; }
@@ -151,22 +174,31 @@ async function onSave(){
     const result = await layer.applyEdits(edits);
     const r = (result.addFeatureResults?.[0] || result.updateFeatureResults?.[0]);
     if (r?.error) throw r.error;
-    toast(selectedFeature ? "Updated." : "Added.");
     const oid = r.objectId || (selectedFeature?.attributes?.[objectIdField]);
     const q = await layer.queryFeatures({ objectIds:[oid], returnGeometry:true, outFields:["*"] });
     if (q.features.length) loadForEdit(q.features[0]);
-  }catch(e){ console.error(e); toast("Save failed."); }
+
+    await openModal({
+      title: selectedFeature ? "Sale Updated" : "Sale Added",
+      html: `<p><strong>Address:</strong> ${attrs[FIELDS.address] || ""}</p>
+             <p><strong>Dates:</strong> ${fromEpoch(attrs[FIELDS.start])} → ${fromEpoch(attrs[FIELDS.end]) || ""}</p>
+             <p><strong>Description:</strong><br>${(attrs[FIELDS.description] || "").replace(/</g,'&lt;')}</p>`,
+      actions: [{label:"OK", value:true}]
+    });
+  }catch(e){ console.error(e); await openModal({ title:"Save failed", html:`<p>Could not save. Check permissions and CORS settings.</p>`, actions:[{label:"OK"}]}); }
 }
 
 async function onDelete(){
   if (!!CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to delete."); return; }
   if (!selectedFeature) return toast("Select a sale first.");
-  if (!confirm("Delete this sale?")) return;
+  const confirm = await openModal({ title:"Delete Sale?", html:"<p>This cannot be undone.</p>", actions:[{label:"Cancel", value:false, variant:"btn-secondary"}, {label:"Delete", value:true, variant:"btn-danger"}]});
+  if (!confirm) return;
   try{
     const r = await layer.applyEdits({ deleteFeatures: [{ objectId: selectedFeature.attributes[objectIdField] }] });
     if (r.deleteFeatureResults?.[0]?.error) throw r.deleteFeatureResults[0].error;
-    toast("Deleted."); clearForm(); editLayer.removeAll(); selectedFeature=null; setStatus("Deleted. Click map to add a new one.");
-  }catch(e){ console.error(e); toast("Delete failed."); }
+    editLayer.removeAll(); selectedFeature=null; clearForm();
+    await openModal({ title:"Deleted", html:"<p>The sale has been removed.</p>", actions:[{label:"OK"}]});
+  }catch(e){ console.error(e); await openModal({ title:"Delete failed", html:"<p>Could not delete. Check permissions.</p>", actions:[{label:"OK"}]}); }
 }
 
 function clearForm(){
@@ -176,6 +208,64 @@ function clearForm(){
   $("#details").value = ""; $("#descriptionRaw").value = "";
   setStatus("New sale — click the map to place a point.");
   selectedFeature=null;
+}
+
+async function showSalesList(){
+  // Fetch recent 200 sales, newest first by start date
+  const q = await layer.queryFeatures({ where: "1=1", outFields: ["*"], orderByFields: [FIELDS.start + " DESC"], returnGeometry: true, num: 200 });
+  const rows = q.features.map(f=>{
+    const a = f.attributes;
+    const title = a[FIELDS.address] || "(no address)";
+    const sub = [fromEpoch(a[FIELDS.start]), fromEpoch(a[FIELDS.end])].filter(Boolean).join(" → ");
+    return { oid: a[objectIdField], title, sub, feature: f };
+  });
+
+  const items = rows.map(r=>`
+    <div class="list-row" data-oid="${r.oid}">
+      <div class="meta">
+        <span class="title">${r.title.replace(/</g,'&lt;')}</span>
+        <span>${r.sub}</span>
+      </div>
+      <div class="row-actions">
+        <button class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
+        <button class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
+      </div>
+    </div>`).join("") || "<p>No sales found.</p>";
+
+  const modal = document.getElementById("modalTpl").content.cloneNode(true);
+  const root = modal.querySelector(".modal-backdrop");
+  modal.querySelector(".modal-title").textContent = "Garage Sales";
+  modal.querySelector(".modal-body").innerHTML = `<div class="list">${items}</div>`;
+  modal.querySelector(".modal-actions").innerHTML = '<button class="btn">Close</button>';
+  modal.querySelector(".modal-actions .btn").addEventListener("click", ()=> root.remove());
+  modal.querySelector(".modal-close").addEventListener("click", ()=> root.remove());
+  document.body.appendChild(modal);
+
+  root.addEventListener("click", (e)=>{
+    const editBtn = e.target.closest(".btn-edit"); const delBtn = e.target.closest(".btn-del");
+    if (editBtn){
+      const oid = +editBtn.dataset.oid;
+      const f = rows.find(r=> r.oid === oid)?.feature;
+      if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
+      root.remove();
+    }
+    if (delBtn){
+      const oid = +delBtn.dataset.oid;
+      const f = rows.find(r=> r.oid === oid)?.feature;
+      if (f){ root.remove(); selectedFeature = f; onDelete(); }
+    }
+  });
+}
+
+async function showGuide(){
+  const html = `
+    <ol style="line-height:1.7;">
+      <li><strong>Add a sale:</strong> click the map to place the point, fill Address + Dates + Time/Details, then <em>Save</em>.</li>
+      <li><strong>Edit a sale:</strong> click a point on the map <em>or</em> open <em>Sales</em> and click <em>Edit</em>.</li>
+      <li><strong>Delete:</strong> select a sale, then <em>Delete</em> (confirmation required).</li>
+      <li><strong>Description:</strong> it auto‑composes from time + details; uncheck to type your own.</li>
+    </ol>`;
+  await openModal({ title: "Quick Guide", html, actions: [{label:"Got it", value:true}] });
 }
 
 init();
