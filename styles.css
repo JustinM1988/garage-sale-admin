@@ -1,15 +1,15 @@
-/* Neon / glass look */
+/* V3 — lighter dark, modern, neon accents, and center modal popups */
 :root{
-  --bg:#05060c;
-  --panel:rgba(12,16,28,.5);
-  --muted:#a6b0c2;
-  --text:#e8f0ff;
-  --accent:#30f6d9;
-  --accent-2:#6a7cff;
+  --bg:#0b1118;
+  --panel:rgba(20,26,38,.6);
+  --muted:#b5c0cf;
+  --text:#eef4ff;
+  --accent:#3cf0d4;
+  --accent-2:#7c89ff;
   --danger:#ff6b6b;
-  --line:rgba(255,255,255,.08);
-  --input:rgba(9,11,20,.75);
-  --glow:0 0 30px rgba(106,124,255,.25), 0 0 50px rgba(48,246,217,.2);
+  --line:rgba(255,255,255,.10);
+  --input:rgba(15,20,32,.82);
+  --glow:0 0 30px rgba(124,137,255,.18), 0 0 40px rgba(60,240,212,.2);
 }
 
 *{box-sizing:border-box}
@@ -17,11 +17,11 @@ html,body{height:100%}
 body{
   margin:0;
   background:
-    radial-gradient(1200px 600px at 10% -20%, rgba(48,246,217,.08), transparent 60%),
-    radial-gradient(1200px 600px at 100% 10%, rgba(106,124,255,.10), transparent 60%),
+    radial-gradient(1100px 500px at 5% -15%, rgba(60,240,212,.08), transparent 60%),
+    radial-gradient(900px 400px at 95% 0%, rgba(124,137,255,.10), transparent 50%),
     var(--bg);
   color:var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial;
 }
 
 .glass{backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); background:var(--panel); border:1px solid var(--line); box-shadow: var(--glow);}
@@ -37,8 +37,8 @@ body{
 }
 .brand h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.3px}
 
-.layout{display:grid;grid-template-columns:460px 1fr;gap:14px;padding:14px;height:calc(100vh - 56px)}
-.panel{border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.layout{display:grid;grid-template-columns:470px 1fr;gap:14px;padding:14px;height:calc(100vh - 56px)}
+.panel{border-radius:14px;display:flex;flex-direction:column; /* allow dropdowns to overflow */ overflow:visible;}
 .form-panel{padding:16px;gap:8px;overflow:auto}
 .map-panel{display:flex;flex-direction:column}
 .map{flex:1;min-height:420px}
@@ -58,9 +58,9 @@ body{
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px}
 
-.time-row{display:flex;align-items:center;gap:6px}
-.time-row input{width:70px;text-align:center}
-.time-row select{width:90px;text-align:center}
+.time-row{display:flex;align-items:center;gap:6px;overflow:visible}
+.time-row input{width:72px;text-align:center}
+.time-row select{min-width:90px;text-align:center}
 
 .checkbox{display:flex;align-items:center;gap:8px;color:var(--muted)}
 
@@ -73,9 +73,25 @@ body{
   font-weight:800;cursor:pointer;letter-spacing:.2px
 }
 .btn:hover{filter:brightness(1.08)}
-.btn-secondary{background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--line)}
+.btn-secondary{background:rgba(255,255,255,.10);color:var(--text);border:1px solid var(--line)}
 .btn-danger{background:var(--danger);color:#230b0b}
 
 .status{margin-top:8px;color:var(--muted);font-size:12px}
+
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:10px 14px;border-radius:12px}
 .toast-text{font-size:13px}
+
+/* Modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:10}
+.modal{width:min(720px,92vw);border-radius:16px;overflow:hidden}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.modal-title{font-weight:800}
+.modal-body{padding:16px;color:var(--text)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line)}
+.modal-close{background:transparent;border:none;color:var(--text);font-size:22px;cursor:pointer}
+
+.list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto}
+.list-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--input);border-radius:10px;border:1px solid var(--line)}
+.list-row .meta{display:flex;flex-direction:column;font-size:12px;color:var(--muted)}
+.list-row .meta .title{color:var(--text);font-weight:700;font-size:14px}
+.row-actions{display:flex;gap:8px}
