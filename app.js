@@ -1,4 +1,5 @@
-// v3.5 — debug overlay + OSM fallback + ghost pin + guarded add + height self-fix
+// v3.6 — Admin Debug panel (password 123456), enhanced logging, OSM fallback,
+// ghost pin in New mode, guarded add, cancel UX, sales modal close-once.
 
 import esriConfig   from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map          from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -10,30 +11,28 @@ import Search       from "https://js.arcgis.com/4.29/@arcgis/core/widgets/Search
 import OAuthInfo    from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInfo.js";
 import esriId       from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
-const DEBUG = true;
-
-// ---------- Config ----------
+// ------------------ Config ------------------
 const CONFIG = {
-  LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
-  PORTAL_URL: "https://www.arcgis.com",
-  OAUTH_APPID: null,
-  CENTER: [-97.323, 27.876],
-  ZOOM: 13
+  LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
+  PORTAL_URL:  "https://www.arcgis.com",
+  OAUTH_APPID: null,           // set your AGOL OAuth appId to require login; keep null for public
+  CENTER:     [-97.323, 27.876],
+  ZOOM:       13
 };
-// Put an ArcGIS API key here only if you want ArcGIS basemaps.
-// Leave null to use OSM (no key required, reduces failure points).
+// ArcGIS basemap key (optional). Leave null to use OSM (no key needed).
 const ARCGIS_API_KEY = null;
 
+// layer field names
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
-// ---------- tiny helpers ----------
+// ------------------ Helpers ------------------
 const $ = (sel) => document.querySelector(sel);
 function toast(msg){
-  const n=document.createElement("div");
-  n.className="toast glass";
-  n.innerHTML=`<span class="toast-text">${msg}</span>`;
-  document.body.appendChild(n);
-  setTimeout(()=>n.remove(),2200);
+  const el = document.createElement("div");
+  el.className = "toast glass";
+  el.innerHTML = `<span class="toast-text">${msg}</span>`;
+  document.body.appendChild(el);
+  setTimeout(()=> el.remove(), 2200);
 }
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
 function toEpochMaybe(v){
@@ -68,6 +67,8 @@ function composeDescription(){
   return details ? `${time}: ${details}` : time;
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
+
+// Custom icon
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -78,58 +79,117 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
 
-// ---------- debug overlay ----------
-function makeDebug(){
-  if (!DEBUG) return null;
-  const box = document.createElement("div");
-  box.style.cssText = `
-    position: fixed; top: 8px; left: 8px; z-index: 3000;
-    max-width: 44vw; padding: 8px 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: rgba(0,0,0,.65); color: #e6fffa; border:1px solid rgba(255,255,255,.2); border-radius:8px;
-    box-shadow: 0 6px 16px rgba(0,0,0,.4);
+// ------------------ Admin Debug panel ------------------
+const ADMIN_PASSWORD = "123456";
+let dbg = null, debugEnabled = false, debugPaused = false, debugVerbose = false;
+
+function createDebugPanel(){
+  if (dbg) return dbg;
+  const wrap = document.createElement("div");
+  wrap.className = "debug-panel glass";
+  wrap.innerHTML = `
+    <div class="debug-header">
+      <div class="debug-title">Admin Debug</div>
+      <div class="debug-controls">
+        <span id="dbgBasemap" class="debug-badge">basemap: —</span>
+        <button id="dbgPause" class="debug-btn">Pause</button>
+        <button id="dbgVerbose" class="debug-btn">Verbose: Off</button>
+        <button id="dbgClear" class="debug-btn">Clear</button>
+        <button id="dbgCopy" class="debug-btn">Copy</button>
+        <button id="dbgClose" class="debug-btn">Close</button>
+      </div>
+    </div>
+    <div id="dbgBody" class="debug-body"></div>
+    <div id="dbgFooter" class="debug-footer"></div>
   `;
-  box.innerHTML = `<div style="font-weight:700;margin-bottom:4px;">Debug</div><div id="dbglog"></div>`;
-  document.body.appendChild(box);
-  const logEl = box.querySelector("#dbglog");
-  const log = (msg, level="")=>{
-    const c = level==="err" ? "#ff8c8c" : level==="warn" ? "#ffe08c" : "#b8f3ff";
-    const row = document.createElement("div");
-    row.innerHTML = `<span style="color:${c}">•</span> ${msg}`;
-    logEl.appendChild(row);
+  document.body.appendChild(wrap);
+
+  // drag by header
+  const header = wrap.querySelector(".debug-header");
+  let drag=false, sx=0, sy=0, ox=0, oy=0;
+  header.addEventListener("mousedown", (e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
+  window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
+  window.addEventListener("mouseup", ()=> drag=false);
+
+  // controls
+  wrap.querySelector("#dbgPause").onclick = ()=>{
+    debugPaused = !debugPaused;
+    wrap.querySelector("#dbgPause").textContent = debugPaused ? "Resume" : "Pause";
+    log(`[debug] ${debugPaused ? "paused" : "resumed"}`);
   };
-  window.addEventListener("error", (e)=> log(`JS Error: ${e.message}`, "err"));
-  window.addEventListener("unhandledrejection", (e)=> log(`Unhandled: ${e.reason}`, "err"));
-  return { log, box };
+  wrap.querySelector("#dbgVerbose").onclick = ()=>{
+    debugVerbose = !debugVerbose;
+    wrap.querySelector("#dbgVerbose").textContent = `Verbose: ${debugVerbose ? "On" : "Off"}`;
+    log(`[debug] verbose ${debugVerbose ? "enabled" : "disabled"}`);
+  };
+  wrap.querySelector("#dbgClear").onclick = ()=>{ wrap.querySelector("#dbgBody").innerHTML=""; };
+  wrap.querySelector("#dbgCopy").onclick = ()=>{
+    const text = [...wrap.querySelectorAll(".debug-row")].map(d=>d.textContent).join("\n");
+    navigator.clipboard?.writeText(text);
+    toast("Debug copied");
+  };
+  wrap.querySelector("#dbgClose").onclick = ()=>{ wrap.style.display="none"; debugEnabled=false; };
+
+  // error pipes
+  window.addEventListener("error",(e)=> log(`JS Error: ${e.message}`, "err"));
+  window.addEventListener("unhandledrejection",(e)=> log(`Unhandled: ${e.reason}`, "err"));
+
+  dbg = { wrap, log, footer:updateFooter, setBasemap };
+  return dbg;
+
+  function log(msg, level="info"){
+    if (!debugEnabled || debugPaused) return;
+    const body = wrap.querySelector("#dbgBody");
+    const row = document.createElement("div");
+    row.className = "debug-row";
+    const bullet = level==="err" ? "✖" : level==="warn" ? "⚠" : "•";
+    row.textContent = `${bullet} ${msg}`;
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+  }
+  function updateFooter(info){
+    if (!debugEnabled) return;
+    wrap.querySelector("#dbgFooter").textContent = info;
+  }
+  function setBasemap(txt){
+    wrap.querySelector("#dbgBasemap").textContent = `basemap: ${txt}`;
+  }
 }
+function openAdmin(){
+  if (debugEnabled){ dbg?.wrap && (dbg.wrap.style.display="block"); return; }
+  const pass = prompt("Enter admin password:");
+  if (pass !== ADMIN_PASSWORD){ toast("Wrong password"); return; }
+  createDebugPanel();
+  debugEnabled = true;
+  dbg.wrap.style.display = "block";
+  log(`Admin debug opened (verbose ${debugVerbose ? "on" : "off"})`);
+}
+function log(msg, level){ createDebugPanel(); dbg.log(msg, level); }
+function updateFooter(){ if (!view) return; const c=view.center; const info=`center: ${c.longitude.toFixed(5)}, ${c.latitude.toFixed(5)}  |  zoom: ${view.zoom}  |  scale: ${Math.round(view.scale).toLocaleString()}  |  features: ${_featureCount}`; dbg?.footer(info); }
+function setBasemapBadge(txt){ dbg?.setBasemap(txt); }
 
-let DBG = null;
-
-// ---------- app state ----------
+// ------------------ App state ------------------
 let map, view, layer, editLayer, ghostLayer, ghostGraphic, search;
 let selectedFeature=null, objectIdField="OBJECTID";
-let signedIn=false, inNewMode=false;
+let signedIn=false, inNewMode=false, _featureCount=0;
 
 function closeAllModals(){ document.querySelectorAll(".modal-backdrop").forEach(n=>n.remove()); }
 
-// ---------- init ----------
+// ------------------ Init ------------------
 async function init(){
-  DBG = makeDebug();
-  DBG?.log(`app v3.5 starting`);
-  DBG?.log(`UA: ${navigator.userAgent.split(")")[0]})`);
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv){ DBG?.log(`#map not found in DOM (index.html mismatch)`, "err"); return; }
+  // Wire Admin button
+  $("#btnAdmin")?.addEventListener("click", openAdmin);
 
-  // Map container size check + self-fix
-  const checkSize = ()=>{
-    const h = mapDiv.offsetHeight, w = mapDiv.offsetWidth;
-    DBG?.log(`map div size: ${w} x ${h}px`);
-    if (h < 200){
-      DBG?.log(`map div too short (<200px). Applying height self-fix.`, "warn");
-      mapDiv.style.minHeight = "520px";
-      mapDiv.style.height = "60vh";
-    }
-  };
-  checkSize();
+  log(`app v3.6 starting`);
+  log(`UA: ${navigator.userAgent}`);
+
+  const mapDiv = document.getElementById("map");
+  if (!mapDiv){ log(`#map not found in DOM`, "err"); return; }
+
+  // Self-fix height if needed
+  const h = mapDiv.offsetHeight, w = mapDiv.offsetWidth;
+  log(`map div size: ${w} x ${h}px`);
+  if (h < 200){ mapDiv.style.minHeight="520px"; mapDiv.style.height="60vh"; log(`map div too short; applied height fix`, "warn"); }
 
   // Optional OAuth
   if (CONFIG.OAUTH_APPID){
@@ -137,82 +197,94 @@ async function init(){
       const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
       esriId.registerOAuthInfos([info]);
       await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`);
-      signedIn=true; DBG?.log(`OAuth signed in`);
-    }catch{ DBG?.log(`OAuth not signed in`); }
+      signedIn=true; log(`OAuth signed in`);
+    }catch{ log(`OAuth not signed in`); }
   }
 
-  // Basemap selection
-  if (ARCGIS_API_KEY){
-    esriConfig.apiKey = ARCGIS_API_KEY;
-    map = new Map({ basemap: "arcgis-dark-gray" });
-    DBG?.log(`basemap: arcgis-dark-gray (with key)`);
-  } else {
-    map = new Map({ basemap: "osm" });
-    DBG?.log(`basemap: OSM (no key)`);
-  }
+  // Basemap
+  if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); }
+  else { map = new Map({ basemap:"osm" }); setBasemapBadge("osm"); log(`basemap: OSM (no key)`); }
 
-  view = new MapView({ container: "map", map, center: CONFIG.CENTER, zoom: CONFIG.ZOOM });
-
+  view = new MapView({ container:"map", map, center: CONFIG.CENTER, zoom: CONFIG.ZOOM });
   view.when(
-    () => DBG?.log("MapView ready"),
-    (err) => { DBG?.log(`MapView failed: ${err?.message||err}`, "err"); toast("Map failed to initialize."); }
+    () => { log("MapView ready"); updateFooter(); },
+    (err) => { log(`MapView failed: ${err?.message||err}`, "err"); toast("Map failed to initialize."); }
   );
 
   // Feature layer
-  layer = new FeatureLayer({ url: CONFIG.LAYER_URL, outFields: ["*"], popupEnabled:false });
-  layer.renderer = {
-    type:"simple",
-    symbol: { type:"picture-marker", url: houseSvg("#ff4aa2","#ffffff"), width:"24px", height:"24px", yoffset:8 }
-  };
+  layer = new FeatureLayer({ url: CONFIG.LAYER_URL, outFields:["*"], popupEnabled:false });
+  layer.renderer = { type:"simple", symbol:{ type:"picture-marker", url:houseSvg("#ff4aa2","#ffffff"), width:"24px", height:"24px", yoffset:8 } };
   map.add(layer);
 
   try{
     await layer.load();
     objectIdField = layer.objectIdField;
-    DBG?.log(`layer loaded, OID field: ${objectIdField}`);
-    // Watch the layer view for errors/updates
-    view.whenLayerView(layer).then(lv=>{
-      DBG?.log(`layerview created`);
-      lv.watch("updating", (u)=> DBG?.log(`layerview updating: ${u}`));
-    }).catch(err=>{
-      DBG?.log(`whenLayerView error: ${err?.message||err}`, "err");
-    });
-  }catch(e){
-    DBG?.log(`layer load error: ${e?.message||e}`, "err");
-  }
+    log(`layer loaded, OID field: ${objectIdField}`);
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
+    log(`feature count: ${_featureCount}`);
+    updateFooter();
 
-  // Layers for editing
+    view.whenLayerView(layer).then(lv=>{
+      log(`layerview created`);
+      lv.watch("updating", (u)=> log(`layerview updating: ${u}`));
+    }).catch(err=> log(`whenLayerView error: ${err?.message||err}`, "err"));
+  }catch(e){ log(`layer load error: ${e?.message||e}`, "err"); }
+
+  // Layers used while editing
   editLayer  = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
-  // Search
-  search = new Search({ view }); view.ui.add(search, "top-right");
+  // Search widget + diagnostics
+  search = new Search({ view });
+  view.ui.add(search, "top-right");
+  search.on("search-complete", (e)=> log(`search-complete: ${e.numResults} providers`));
+  search.on("select-result", (e)=> log(`select-result: ${e.result?.name||"(no name)"}`));
+  search.on("search-clear", ()=> log(`search cleared`));
+  search.on("search-error", (e)=> log(`search-error: ${e.error?.message||e}`, "err"));
 
-  // Ghost pin follows mouse in New mode
+  // Ghost pin follows the mouse in New mode (throttled)
+  let lastMoveT=0;
   view.on("pointer-move", (e)=>{
     if (!inNewMode) return;
+    const now = performance.now(); if (!debugVerbose && now-lastMoveT<250) return; lastMoveT=now;
     const mp = view.toMap({ x:e.x, y:e.y }); if (!mp) return;
     if (!ghostGraphic){
       ghostGraphic = new Graphic({
         geometry: mp,
-        symbol: { type: "simple-marker", size: 14, color: [60,240,212,0.9], outline: { color:[12,26,44,1], width:1 } }
+        symbol: { type:"simple-marker", size:14, color:[60,240,212,0.9], outline:{ color:[12,26,44,1], width:1 } }
       });
       ghostLayer.add(ghostGraphic);
     } else {
       ghostGraphic.geometry = mp;
     }
+    if (debugVerbose) log(`pointer ${mp.longitude.toFixed(5)}, ${mp.latitude.toFixed(5)}`);
   });
 
-  // Guarded click: select when not in New; place when in New
+  // Map click: select vs place
   view.on("click", async (ev)=>{
+    const p = ev.mapPoint;
     if (!inNewMode){
       const ht = await view.hitTest(ev);
       const g = ht.results.find(r=> r.graphic?.layer === layer)?.graphic;
-      if (g) loadForEdit(g);
+      if (g){ log(`select ${g.attributes?.[objectIdField] ?? "?"}`); loadForEdit(g); }
+      else { log(`click on map (no feature)`); }
       return;
     }
-    finalizePlacement(ev.mapPoint);
+    log(`place at ${p.longitude.toFixed(5)}, ${p.latitude.toFixed(5)}`);
+    finalizePlacement(p);
   });
+
+  // View telemetry (throttled)
+  let lastT=0;
+  view.watch(["center","zoom","scale"], ()=>{
+    const now = performance.now(); if (now-lastT<400) return; lastT=now;
+    updateFooter();
+    if (debugVerbose) log(`view: zoom=${view.zoom} scale=${Math.round(view.scale)}`);
+  });
+
+  // Online/offline
+  window.addEventListener("online", ()=> log("network: online"));
+  window.addEventListener("offline",()=> log("network: offline"));
 
   // UI events
   $("#btnSave")  ?.addEventListener("click", onSave);
@@ -224,11 +296,11 @@ async function init(){
 
   $("#btnSignIn") ?.addEventListener("click", async ()=>{
     if (!CONFIG.OAUTH_APPID){ toast("Sign-in not required."); return; }
-    try{ await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; toast("Signed in."); updateAuthUI(); }
+    try{ await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; toast("Signed in."); updateAuthUI(); log("OAuth: signed in"); }
     catch(_){} // cancelled
   });
   $("#btnSignOut")?.addEventListener("click", ()=>{
-    esriId.destroyCredentials(); signedIn=false; toast("Signed out."); updateAuthUI();
+    esriId.destroyCredentials(); signedIn=false; toast("Signed out."); updateAuthUI(); log("OAuth: signed out");
   });
 
   ["timeStartHour","timeStartMin","timeStartAmPm","timeEndHour","timeEndMin","timeEndAmPm","details","chkCompose"]
@@ -236,21 +308,10 @@ async function init(){
   syncDesc();
 
   updateAuthUI();
-
-  // Status + coordinate chip
-  view.watch("center", ()=>{
-    const c=view.center;
-    const el=$("#coords"); if (!el) return;
-    el.textContent=`Lon: ${c.longitude.toFixed(5)} • Lat: ${c.latitude.toFixed(5)}`;
-  });
-
   setStatus("Click a sale to edit, or click New to add a sale.");
-
-  // Re-check map size after a moment (handles CSS loading late)
-  setTimeout(checkSize, 1200);
 }
 
-// ---------- auth UI ----------
+// ------------------ Auth UI ------------------
 function updateAuthUI(){
   const inUse = !!CONFIG.OAUTH_APPID;
   const signInBtn = $("#btnSignIn"), signOutBtn = $("#btnSignOut");
@@ -259,13 +320,14 @@ function updateAuthUI(){
   else { signInBtn && (signInBtn.style.display="inline-block"); signOutBtn && (signOutBtn.style.display="none"); }
 }
 
-// ---------- add/edit flow ----------
+// ------------------ Add / Edit flow ------------------
 function enterAddMode(){
   inNewMode = true;
   $("#btnCancel") && ($("#btnCancel").style.display="inline-block");
   $("#modeChip") && ($("#modeChip").style.display="inline-block");
   editLayer.removeAll(); ghostLayer.removeAll(); ghostGraphic=null;
   setStatus("Add mode — move the cursor and click to place the sale.");
+  log("mode: New");
 }
 function finalizePlacement(mp){
   if (!mp) return;
@@ -283,6 +345,7 @@ function cancelEditing(){
   editLayer.removeAll();
   $("#address").value = ""; $("#descriptionRaw").value=""; $("#dateStart").value=""; $("#dateEnd").value="";
   setStatus("Exited editing. Click a sale to edit, or click New to add.");
+  log("mode: cancel");
 }
 function placePoint(lon, lat){
   editLayer.removeAll();
@@ -305,6 +368,7 @@ function loadForEdit(g){
   placePoint(g.geometry.longitude, g.geometry.latitude);
   const label = [a[FIELDS.address], fmtYMD(a[FIELDS.start])].filter(Boolean).join(" — ");
   setStatus(`Editing: ${label}. Use Cancel to exit without saving.`);
+  log(`edit OID=${a[objectIdField]}`);
 }
 function parseTimeFromDescription(text){
   const m = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -314,7 +378,7 @@ function parseTimeFromDescription(text){
   syncDesc();
 }
 
-// ---------- save/delete ----------
+// ------------------ Save / Delete ------------------
 function attributesFromForm(){
   syncDesc();
   return {
@@ -348,12 +412,17 @@ async function onSave(){
     if (r?.error) throw r.error;
 
     const oid = r.objectId || (selectedFeature?.attributes?.[layer.objectIdField]);
+    log(`applyEdits ok (oid=${oid})`);
     const q = await layer.queryFeatures({ objectIds:[oid], returnGeometry:true, outFields:["*"] });
     if (q.features.length) loadForEdit(q.features[0]);
 
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
+    updateFooter();
+
     toast(selectedFeature ? "Sale updated." : "Sale added.");
-    inNewMode=false; $("#btnCancel") && ($("#btnCancel").style.display="none"); $("#modeChip") && ($("#modeChip").style.display="none");
-  }catch(e){ console.error(e); toast("Save failed (permissions or network)."); }
+    inNewMode=false; $("#btnCancel")?.style && ($("#btnCancel").style.display="none");
+    $("#modeChip")?.style && ($("#modeChip").style.display="none");
+  }catch(e){ console.error(e); log(`applyEdits error: ${e?.message||e}`, "err"); toast("Save failed (permissions or network)."); }
 }
 async function onDelete(){
   if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to delete."); return; }
@@ -361,13 +430,16 @@ async function onDelete(){
   try{
     const r = await layer.applyEdits({ deleteFeatures: [{ objectId: selectedFeature.attributes[layer.objectIdField] }] });
     if (r.deleteFeatureResults?.[0]?.error) throw r.deleteFeatureResults[0].error;
+    log(`delete ok (oid=${selectedFeature.attributes[layer.objectIdField]})`);
     editLayer.removeAll(); selectedFeature=null;
     $("#address").value = ""; $("#descriptionRaw").value=""; $("#dateStart").value=""; $("#dateEnd").value="";
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
+    updateFooter();
     toast("Deleted.");
-  }catch(e){ console.error(e); toast("Delete failed."); }
+  }catch(e){ console.error(e); log(`delete error: ${e?.message||e}`, "err"); toast("Delete failed."); }
 }
 
-// ---------- Sales list + Guide ----------
+// ------------------ Sales list + Guide ------------------
 async function showSalesList(){
   const q = await layer.queryFeatures({ where:"1=1", outFields:["*"], orderByFields:[FIELDS.start+" DESC"], returnGeometry:true, num:200 });
   const rows = q.features.map(f=>{ const a=f.attributes; return {
@@ -407,15 +479,15 @@ async function showSalesList(){
   body.querySelectorAll(".btn-edit").forEach(btn=>{
     btn.addEventListener("click",(e)=>{
       e.preventDefault(); e.stopPropagation();
-      const oid=+btn.dataset.oid; const f=rows.find(r=>r.oid===oid)?.feature;
+      const oid = +btn.dataset.oid; const f = rows.find(r=> r.oid===oid)?.feature;
       closeAllModals(); if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
     });
   });
   body.querySelectorAll(".btn-del").forEach(btn=>{
     btn.addEventListener("click", async (e)=>{
       e.preventDefault(); e.stopPropagation();
-      const oid=+btn.dataset.oid; const f=rows.find(r=>r.oid===oid)?.feature;
-      closeAllModals(); if (f){ selectedFeature=f; await onDelete(); }
+      const oid = +btn.dataset.oid; const f = rows.find(r=> r.oid===oid)?.feature;
+      closeAllModals(); if (f){ selectedFeature = f; await onDelete(); }
     });
   });
 }
@@ -434,8 +506,9 @@ async function showGuide(){
     </div>
     <div class="modal-actions"><button class="btn">Got it</button></div></div>`;
   wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".btn").onclick = ()=> closeAllModals();
+  wrap.querySelector(".btn").onclick        = ()=> closeAllModals();
   document.body.appendChild(wrap);
 }
 
+// boot
 init();
