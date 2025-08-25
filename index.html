@@ -5,16 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Garage Sales Control Center</title>
 
+    <!-- Make all relative URLs resolve from your repo site -->
+    <base href="/garage-sale-admin/">
+
     <!-- Esri theme + your styles (cache-busted) -->
-    <link rel="stylesheet" href="https://justinm1988.github.io/garage-sale-admin/styles.css?v=2025-08-18-1">
-    <script type="module" src="https://justinm1988.github.io/garage-sale-admin/app.js?v=2025-08-18-1"></script>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css?v=4.29">
+    <link rel="stylesheet" href="styles.css?v=fix-1">
 
-
-    <!-- Minimal fallback so the map & layout aren’t broken if styles.css doesn’t load -->
+    <!-- Minimal fallback so the map shows even if styles.css is cached/missing -->
     <style>
-      html, body { height: 100%; }
-      .map { min-height: 420px; }
-      /* Optional: make buttons readable in fallback mode */
+      html, body { height: 100%; margin: 0; }
+      .layout { min-height: calc(100vh - 56px); height: auto; }
+      .map-panel { display: flex; min-height: 520px; }
+      #map, .map { flex: 1; height: 60vh; min-height: 520px; }
       .btn { padding: 8px 12px; }
     </style>
   </head>
@@ -111,7 +114,7 @@
         </div>
 
         <div id="status" class="status">
-          Click a sale to edit, or click map to place a new one.
+          Click a sale to edit, or click <strong>New</strong> to place a new one.
         </div>
       </section>
 
@@ -129,7 +132,11 @@
 
     </main>
 
-    <!-- App (cache-busted) -->
-    <script type="module" src="./app.js?v=3.3"></script>
+    <!-- Load app AFTER the DOM exists (one script only) -->
+    <script type="module" src="app.js?v=fix-1"></script>
+
+    <noscript>
+      <p style="padding:12px">This app requires JavaScript.</p>
+    </noscript>
   </body>
 </html>
