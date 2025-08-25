@@ -207,13 +207,23 @@ function finalizePlacement(mp){
   setStatus("Point placed — fill the form and Save, or Cancel.");
 }
 function cancelEditing(){
-  inNewMode=false;
-  $("#btnCancel") && ($("#btnCancel").style.display="none");
-  $("#modeChip") && ($("#modeChip").style.display="none");
-  ghostLayer.removeAll(); editLayer.removeAll();
-  setStatus("Cancelled new sale. Click a sale to edit, or click New to add.");
-}
+  inNewMode = false;
+  selectedFeature = null;
 
+  const cancelBtn = document.querySelector("#btnCancel");
+  if (cancelBtn) cancelBtn.style.display = "none";
+  const chip = document.querySelector("#modeChip");
+  if (chip) chip.style.display = "none";
+
+  // clear temp marker + form
+  ghostLayer.removeAll(); editLayer.removeAll();
+  document.querySelector("#address").value = "";
+  document.querySelector("#descriptionRaw").value = "";
+  document.querySelector("#dateStart").value = "";
+  document.querySelector("#dateEnd").value = "";
+
+  setStatus("Exited editing. Click a sale to edit, or click New to add.");
+}
 function placePoint(lon, lat){
   editLayer.removeAll();
   editLayer.add(new Graphic({
@@ -223,18 +233,26 @@ function placePoint(lon, lat){
 }
 
 function loadForEdit(g){
-  selectedFeature = g; inNewMode=false;
-  $("#btnCancel") && ($("#btnCancel").style.display="none");
-  $("#modeChip") && ($("#modeChip").style.display="none");
+  selectedFeature = g;
+  inNewMode = false;
+
+  // show Cancel while editing an existing record
+  const cancelBtn = document.querySelector("#btnCancel");
+  if (cancelBtn) cancelBtn.style.display = "inline-block";
+  const chip = document.querySelector("#modeChip");
+  if (chip) chip.style.display = "none";
+
   const a = g.attributes || {};
-  $("#address").value = a[FIELDS.address] ?? "";
-  $("#descriptionRaw").value = a[FIELDS.description] ?? "";
-  $("#dateStart").value = fmtYMD(a[FIELDS.start]) || "";
-  $("#dateEnd").value = fmtYMD(a[FIELDS.end]) || "";
-  parseTimeFromDescription($("#descriptionRaw").value || "");
+  document.querySelector("#address").value       = a[FIELDS.address]     ?? "";
+  document.querySelector("#descriptionRaw").value= a[FIELDS.description] ?? "";
+  document.querySelector("#dateStart").value     = fmtYMD(a[FIELDS.start]) || "";
+  document.querySelector("#dateEnd").value       = fmtYMD(a[FIELDS.end])   || "";
+
+  parseTimeFromDescription(document.querySelector("#descriptionRaw").value || "");
   placePoint(g.geometry.longitude, g.geometry.latitude);
+
   const label = [a[FIELDS.address], fmtYMD(a[FIELDS.start])].filter(Boolean).join(" — ");
-  setStatus(`Editing: ${label}`);
+  setStatus(`Editing: ${label}. Use Cancel to exit without saving.`);
 }
 function parseTimeFromDescription(text){
   const m = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
