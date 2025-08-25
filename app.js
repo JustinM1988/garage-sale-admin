@@ -1,5 +1,4 @@
-// v3.4 — Map fix (OSM fallback if no API key) + ghost pin while in "New" mode
-//        Guarded map click (no add unless New), cancel UX, sales modal close-once.
+// v3.5 — debug overlay + OSM fallback + ghost pin + guarded add + height self-fix
 
 import esriConfig   from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map          from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -11,32 +10,32 @@ import Search       from "https://js.arcgis.com/4.29/@arcgis/core/widgets/Search
 import OAuthInfo    from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInfo.js";
 import esriId       from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
-// ------------------ Config ------------------
+const DEBUG = true;
+
+// ---------- Config ----------
 const CONFIG = {
-  LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
-  PORTAL_URL:  "https://www.arcgis.com",
-  OAUTH_APPID: null,           // set to your AGOL OAuth appId to require login; keep null for public editing
-  CENTER:     [-97.323, 27.876],
-  ZOOM:       13
+  LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
+  PORTAL_URL: "https://www.arcgis.com",
+  OAUTH_APPID: null,
+  CENTER: [-97.323, 27.876],
+  ZOOM: 13
 };
-// Put your ArcGIS API key here if you want ArcGIS basemaps.
-// Leave null to use OSM (no key required).
+// Put an ArcGIS API key here only if you want ArcGIS basemaps.
+// Leave null to use OSM (no key required, reduces failure points).
 const ARCGIS_API_KEY = null;
 
-// field names in your layer
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
-// ------------------ Small helpers ------------------
+// ---------- tiny helpers ----------
 const $ = (sel) => document.querySelector(sel);
 function toast(msg){
-  const el = document.createElement("div");
-  el.className = "toast glass";
-  el.innerHTML = `<span class="toast-text">${msg}</span>`;
-  document.body.appendChild(el);
-  setTimeout(()=> el.remove(), 2200);
+  const n=document.createElement("div");
+  n.className="toast glass";
+  n.innerHTML=`<span class="toast-text">${msg}</span>`;
+  document.body.appendChild(n);
+  setTimeout(()=>n.remove(),2200);
 }
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
-
 function toEpochMaybe(v){
   if (v == null || v === "") return null;
   if (typeof v === "number") return v;
@@ -69,8 +68,6 @@ function composeDescription(){
   return details ? `${time}: ${details}` : time;
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
-
-// Custom circle/house icon for points
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -81,44 +78,87 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
 
-// ------------------ App state ------------------
+// ---------- debug overlay ----------
+function makeDebug(){
+  if (!DEBUG) return null;
+  const box = document.createElement("div");
+  box.style.cssText = `
+    position: fixed; top: 8px; left: 8px; z-index: 3000;
+    max-width: 44vw; padding: 8px 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: rgba(0,0,0,.65); color: #e6fffa; border:1px solid rgba(255,255,255,.2); border-radius:8px;
+    box-shadow: 0 6px 16px rgba(0,0,0,.4);
+  `;
+  box.innerHTML = `<div style="font-weight:700;margin-bottom:4px;">Debug</div><div id="dbglog"></div>`;
+  document.body.appendChild(box);
+  const logEl = box.querySelector("#dbglog");
+  const log = (msg, level="")=>{
+    const c = level==="err" ? "#ff8c8c" : level==="warn" ? "#ffe08c" : "#b8f3ff";
+    const row = document.createElement("div");
+    row.innerHTML = `<span style="color:${c}">•</span> ${msg}`;
+    logEl.appendChild(row);
+  };
+  window.addEventListener("error", (e)=> log(`JS Error: ${e.message}`, "err"));
+  window.addEventListener("unhandledrejection", (e)=> log(`Unhandled: ${e.reason}`, "err"));
+  return { log, box };
+}
+
+let DBG = null;
+
+// ---------- app state ----------
 let map, view, layer, editLayer, ghostLayer, ghostGraphic, search;
 let selectedFeature=null, objectIdField="OBJECTID";
 let signedIn=false, inNewMode=false;
 
 function closeAllModals(){ document.querySelectorAll(".modal-backdrop").forEach(n=>n.remove()); }
 
-// ------------------ Init ------------------
+// ---------- init ----------
 async function init(){
+  DBG = makeDebug();
+  DBG?.log(`app v3.5 starting`);
+  DBG?.log(`UA: ${navigator.userAgent.split(")")[0]})`);
+  const mapDiv = document.getElementById("map");
+  if (!mapDiv){ DBG?.log(`#map not found in DOM (index.html mismatch)`, "err"); return; }
+
+  // Map container size check + self-fix
+  const checkSize = ()=>{
+    const h = mapDiv.offsetHeight, w = mapDiv.offsetWidth;
+    DBG?.log(`map div size: ${w} x ${h}px`);
+    if (h < 200){
+      DBG?.log(`map div too short (<200px). Applying height self-fix.`, "warn");
+      mapDiv.style.minHeight = "520px";
+      mapDiv.style.height = "60vh";
+    }
+  };
+  checkSize();
+
   // Optional OAuth
   if (CONFIG.OAUTH_APPID){
-    const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
-    esriId.registerOAuthInfos([info]);
-    try{ await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; }
-    catch{ signedIn=false; }
+    try{
+      const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
+      esriId.registerOAuthInfos([info]);
+      await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`);
+      signedIn=true; DBG?.log(`OAuth signed in`);
+    }catch{ DBG?.log(`OAuth not signed in`); }
   }
 
-  // Basemap: ArcGIS (with key) or OSM (no key)
+  // Basemap selection
   if (ARCGIS_API_KEY){
     esriConfig.apiKey = ARCGIS_API_KEY;
     map = new Map({ basemap: "arcgis-dark-gray" });
+    DBG?.log(`basemap: arcgis-dark-gray (with key)`);
   } else {
-    map = new Map({ basemap: "osm" }); // no key, always works
+    map = new Map({ basemap: "osm" });
+    DBG?.log(`basemap: OSM (no key)`);
   }
 
-  view = new MapView({
-    container: "map",
-    map,
-    center: CONFIG.CENTER,
-    zoom: CONFIG.ZOOM
-  });
+  view = new MapView({ container: "map", map, center: CONFIG.CENTER, zoom: CONFIG.ZOOM });
 
   view.when(
-    () => console.log("MapView ready"),
-    (err) => { console.error("MapView failed", err); toast("Map failed to initialize."); }
+    () => DBG?.log("MapView ready"),
+    (err) => { DBG?.log(`MapView failed: ${err?.message||err}`, "err"); toast("Map failed to initialize."); }
   );
 
-  // Feature layer (pink house icon)
+  // Feature layer
   layer = new FeatureLayer({ url: CONFIG.LAYER_URL, outFields: ["*"], popupEnabled:false });
   layer.renderer = {
     type:"simple",
@@ -126,30 +166,36 @@ async function init(){
   };
   map.add(layer);
 
-  // Layers used while editing
+  try{
+    await layer.load();
+    objectIdField = layer.objectIdField;
+    DBG?.log(`layer loaded, OID field: ${objectIdField}`);
+    // Watch the layer view for errors/updates
+    view.whenLayerView(layer).then(lv=>{
+      DBG?.log(`layerview created`);
+      lv.watch("updating", (u)=> DBG?.log(`layerview updating: ${u}`));
+    }).catch(err=>{
+      DBG?.log(`whenLayerView error: ${err?.message||err}`, "err");
+    });
+  }catch(e){
+    DBG?.log(`layer load error: ${e?.message||e}`, "err");
+  }
+
+  // Layers for editing
   editLayer  = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
   // Search
   search = new Search({ view }); view.ui.add(search, "top-right");
 
-  await layer.load();
-  objectIdField = layer.objectIdField;
-
-  // Ghost pin follows the mouse in "New" mode
+  // Ghost pin follows mouse in New mode
   view.on("pointer-move", (e)=>{
     if (!inNewMode) return;
     const mp = view.toMap({ x:e.x, y:e.y }); if (!mp) return;
-
     if (!ghostGraphic){
       ghostGraphic = new Graphic({
         geometry: mp,
-        symbol: {
-          type: "simple-marker",
-          size: 14,
-          color: [60, 240, 212, 0.9],             // cyan
-          outline: { color: [12, 26, 44, 1], width: 1 }
-        }
+        symbol: { type: "simple-marker", size: 14, color: [60,240,212,0.9], outline: { color:[12,26,44,1], width:1 } }
       });
       ghostLayer.add(ghostGraphic);
     } else {
@@ -157,7 +203,7 @@ async function init(){
     }
   });
 
-  // Map click: select when not in New; place when in New
+  // Guarded click: select when not in New; place when in New
   view.on("click", async (ev)=>{
     if (!inNewMode){
       const ht = await view.hitTest(ev);
@@ -168,7 +214,7 @@ async function init(){
     finalizePlacement(ev.mapPoint);
   });
 
-  // UI wires
+  // UI events
   $("#btnSave")  ?.addEventListener("click", onSave);
   $("#btnNew")   ?.addEventListener("click", enterAddMode);
   $("#btnCancel")?.addEventListener("click", cancelEditing);
@@ -191,6 +237,7 @@ async function init(){
 
   updateAuthUI();
 
+  // Status + coordinate chip
   view.watch("center", ()=>{
     const c=view.center;
     const el=$("#coords"); if (!el) return;
@@ -198,52 +245,42 @@ async function init(){
   });
 
   setStatus("Click a sale to edit, or click New to add a sale.");
+
+  // Re-check map size after a moment (handles CSS loading late)
+  setTimeout(checkSize, 1200);
 }
 
-// ------------------ Auth UI ------------------
+// ---------- auth UI ----------
 function updateAuthUI(){
   const inUse = !!CONFIG.OAUTH_APPID;
   const signInBtn = $("#btnSignIn"), signOutBtn = $("#btnSignOut");
-  if (!inUse){
-    if (signInBtn) signInBtn.style.display = "none";
-    if (signOutBtn) signOutBtn.style.display = "none";
-    return;
-  }
-  if (signedIn){
-    if (signInBtn) signInBtn.style.display = "none";
-    if (signOutBtn) signOutBtn.style.display = "inline-block";
-  }else{
-    if (signInBtn) signInBtn.style.display = "inline-block";
-    if (signOutBtn) signOutBtn.style.display = "none";
-  }
+  if (!inUse){ signInBtn && (signInBtn.style.display="none"); signOutBtn && (signOutBtn.style.display="none"); return; }
+  if (signedIn){ signInBtn && (signInBtn.style.display="none"); signOutBtn && (signOutBtn.style.display="inline-block"); }
+  else { signInBtn && (signInBtn.style.display="inline-block"); signOutBtn && (signOutBtn.style.display="none"); }
 }
 
-// ------------------ Add / Edit flow ------------------
+// ---------- add/edit flow ----------
 function enterAddMode(){
   inNewMode = true;
   $("#btnCancel") && ($("#btnCancel").style.display="inline-block");
   $("#modeChip") && ($("#modeChip").style.display="inline-block");
-  editLayer.removeAll();
-  ghostLayer.removeAll(); ghostGraphic=null;
+  editLayer.removeAll(); ghostLayer.removeAll(); ghostGraphic=null;
   setStatus("Add mode — move the cursor and click to place the sale.");
 }
 function finalizePlacement(mp){
   if (!mp) return;
   placePoint(mp.longitude, mp.latitude);
-  ghostLayer.removeAll(); ghostGraphic=null;   // clear ghost after placement
+  ghostLayer.removeAll(); ghostGraphic=null;
   $("#address")?.focus();
   setStatus("Point placed — fill the form and Save, or Cancel.");
 }
 function cancelEditing(){
   inNewMode = false;
   selectedFeature = null;
-
-  const cancelBtn = $("#btnCancel"); if (cancelBtn) cancelBtn.style.display="none";
-  const chip      = $("#modeChip");  if (chip)      chip.style.display="none";
-
+  $("#btnCancel") && ($("#btnCancel").style.display="none");
+  $("#modeChip") && ($("#modeChip").style.display="none");
   ghostLayer.removeAll(); ghostGraphic=null;
   editLayer.removeAll();
-
   $("#address").value = ""; $("#descriptionRaw").value=""; $("#dateStart").value=""; $("#dateEnd").value="";
   setStatus("Exited editing. Click a sale to edit, or click New to add.");
 }
@@ -251,26 +288,21 @@ function placePoint(lon, lat){
   editLayer.removeAll();
   editLayer.add(new Graphic({
     geometry:{ type:"point", longitude:lon, latitude:lat },
-    symbol:{ type:"picture-marker", url: houseSvg("#3cf0d4","#0b1118"), width:"32px", height:"32px" } // cyan while editing
+    symbol:{ type:"picture-marker", url: houseSvg("#3cf0d4","#0b1118"), width:"32px", height:"32px" }
   }));
 }
 
 function loadForEdit(g){
-  selectedFeature = g;
-  inNewMode = false;
-
-  const cancelBtn = $("#btnCancel"); if (cancelBtn) cancelBtn.style.display="inline-block";
-  const chip      = $("#modeChip");  if (chip)      chip.style.display="none";
-
+  selectedFeature = g; inNewMode = false;
+  $("#btnCancel") && ($("#btnCancel").style.display="inline-block");
+  $("#modeChip") && ($("#modeChip").style.display="none");
   const a = g.attributes || {};
   $("#address").value        = a[FIELDS.address]     ?? "";
   $("#descriptionRaw").value = a[FIELDS.description] ?? "";
   $("#dateStart").value      = fmtYMD(a[FIELDS.start]) || "";
   $("#dateEnd").value        = fmtYMD(a[FIELDS.end])   || "";
-
   parseTimeFromDescription($("#descriptionRaw").value || "");
   placePoint(g.geometry.longitude, g.geometry.latitude);
-
   const label = [a[FIELDS.address], fmtYMD(a[FIELDS.start])].filter(Boolean).join(" — ");
   setStatus(`Editing: ${label}. Use Cancel to exit without saving.`);
 }
@@ -282,7 +314,7 @@ function parseTimeFromDescription(text){
   syncDesc();
 }
 
-// ------------------ Save / Delete ------------------
+// ---------- save/delete ----------
 function attributesFromForm(){
   syncDesc();
   return {
@@ -292,16 +324,15 @@ function attributesFromForm(){
     [FIELDS.end]: toEpochMaybe($("#dateEnd").value)
   };
 }
-
 async function onSave(){
   if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to save."); return; }
   if (editLayer.graphics.length === 0) return toast("Click New, then click the map to place a point.");
 
   const geom  = editLayer.graphics.getItemAt(0).geometry;
   const attrs = attributesFromForm();
-  if (!attrs[FIELDS.address])      return toast("Address is required.");
-  if (!attrs[FIELDS.description])  return toast("Description is required.");
-  if (!attrs[FIELDS.start])        return toast("Start date is required.");
+  if (!attrs[FIELDS.address])     return toast("Address is required.");
+  if (!attrs[FIELDS.description]) return toast("Description is required.");
+  if (!attrs[FIELDS.start])       return toast("Start date is required.");
 
   let edits;
   if (selectedFeature){
@@ -321,11 +352,9 @@ async function onSave(){
     if (q.features.length) loadForEdit(q.features[0]);
 
     toast(selectedFeature ? "Sale updated." : "Sale added.");
-    inNewMode=false; $("#btnCancel")?.style && ($("#btnCancel").style.display="none");
-    $("#modeChip")?.style && ($("#modeChip").style.display="none");
+    inNewMode=false; $("#btnCancel") && ($("#btnCancel").style.display="none"); $("#modeChip") && ($("#modeChip").style.display="none");
   }catch(e){ console.error(e); toast("Save failed (permissions or network)."); }
 }
-
 async function onDelete(){
   if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to delete."); return; }
   if (!selectedFeature) return toast("Select a sale first.");
@@ -338,31 +367,21 @@ async function onDelete(){
   }catch(e){ console.error(e); toast("Delete failed."); }
 }
 
-// ------------------ Sales list + Guide ------------------
+// ---------- Sales list + Guide ----------
 async function showSalesList(){
-  const q = await layer.queryFeatures({
-    where: "1=1",
-    outFields: ["*"],
-    orderByFields: [FIELDS.start + " DESC"],
-    returnGeometry: true,
-    num: 200
-  });
-
-  const rows = q.features.map(f=>{
-    const a=f.attributes;
-    const title=a[FIELDS.address]||"(no address)";
-    const sub=[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → ");
-    return { oid:a[layer.objectIdField], title, sub, feature:f };
-  });
+  const q = await layer.queryFeatures({ where:"1=1", outFields:["*"], orderByFields:[FIELDS.start+" DESC"], returnGeometry:true, num:200 });
+  const rows = q.features.map(f=>{ const a=f.attributes; return {
+    oid:a[layer.objectIdField],
+    title:a[FIELDS.address]||"(no address)",
+    sub:[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → "),
+    feature:f
+  }; });
 
   const body = document.createElement("div");
   body.className="list";
   body.innerHTML = rows.length ? rows.map(r=>`
     <div class="list-row" data-oid="${r.oid}">
-      <div class="meta">
-        <span class="title">${r.title.replace(/</g,"&lt;")}</span>
-        <span>${r.sub}</span>
-      </div>
+      <div class="meta"><span class="title">${r.title.replace(/</g,"&lt;")}</span><span>${r.sub}</span></div>
       <div class="row-actions">
         <button type="button" class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
         <button type="button" class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
@@ -372,14 +391,9 @@ async function showSalesList(){
   const wrap = document.createElement("div");
   wrap.className="modal-backdrop";
   wrap.innerHTML = `<div class="modal glass">
-    <div class="modal-header">
-      <div class="modal-title">Garage Sales</div>
-      <button type="button" class="modal-close" aria-label="Close">×</button>
-    </div>
+    <div class="modal-header"><div class="modal-title">Garage Sales</div><button type="button" class="modal-close" aria-label="Close">×</button></div>
     <div class="modal-body"></div>
-    <div class="modal-actions">
-      <button type="button" class="btn">Close</button>
-    </div>
+    <div class="modal-actions"><button type="button" class="btn">Close</button></div>
   </div>`;
   wrap.querySelector(".modal-body").appendChild(body);
   document.body.appendChild(wrap);
@@ -393,19 +407,15 @@ async function showSalesList(){
   body.querySelectorAll(".btn-edit").forEach(btn=>{
     btn.addEventListener("click",(e)=>{
       e.preventDefault(); e.stopPropagation();
-      const oid = +btn.dataset.oid;
-      const f = rows.find(r=> r.oid===oid)?.feature;
-      closeAllModals();
-      if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
+      const oid=+btn.dataset.oid; const f=rows.find(r=>r.oid===oid)?.feature;
+      closeAllModals(); if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
     });
   });
   body.querySelectorAll(".btn-del").forEach(btn=>{
     btn.addEventListener("click", async (e)=>{
       e.preventDefault(); e.stopPropagation();
-      const oid = +btn.dataset.oid;
-      const f = rows.find(r=> r.oid===oid)?.feature;
-      closeAllModals();
-      if (f){ selectedFeature = f; await onDelete(); }
+      const oid=+btn.dataset.oid; const f=rows.find(r=>r.oid===oid)?.feature;
+      closeAllModals(); if (f){ selectedFeature=f; await onDelete(); }
     });
   });
 }
@@ -424,9 +434,8 @@ async function showGuide(){
     </div>
     <div class="modal-actions"><button class="btn">Got it</button></div></div>`;
   wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".btn").onclick        = ()=> closeAllModals();
+  wrap.querySelector(".btn").onclick = ()=> closeAllModals();
   document.body.appendChild(wrap);
 }
 
-// boot
 init();
