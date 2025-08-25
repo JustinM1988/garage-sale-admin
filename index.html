@@ -8,9 +8,9 @@
     <!-- Make all relative URLs resolve from your repo site -->
     <base href="/garage-sale-admin/">
 
-    <!-- Esri theme + your styles (cache-busted) -->
+    <!-- Esri theme (for Search widget styling) + your styles -->
     <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css?v=4.29">
-    <link rel="stylesheet" href="styles.css?v=fix-1">
+    <link rel="stylesheet" href="styles.css?v=admin-1">
 
     <!-- Minimal fallback so the map shows even if styles.css is cached/missing -->
     <style>
@@ -32,6 +32,7 @@
       <div class="actions">
         <button id="btnSales" class="btn btn-secondary">Sales</button>
         <button id="btnGuide" class="btn btn-secondary">Guide</button>
+        <button id="btnAdmin" class="btn btn-secondary" title="Open Admin Debug">Admin</button>
         <button id="btnSignIn" class="btn">Sign in</button>
         <button id="btnSignOut" class="btn btn-secondary" style="display:none;">Sign out</button>
       </div>
@@ -133,7 +134,7 @@
     </main>
 
     <!-- Load app AFTER the DOM exists (one script only) -->
-    <script type="module" src="app.js?v=fix-1"></script>
+    <script type="module" src="app.js?v=admin-1"></script>
 
     <noscript>
       <p style="padding:12px">This app requires JavaScript.</p>
