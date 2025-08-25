@@ -1,5 +1,8 @@
 // v3.3 — custom icons, guarded map click (no add unless New), ghost pin, sign-in state
 
+import esriConfig from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
+
+
 const CONFIG = {
   LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL: "https://www.arcgis.com",
