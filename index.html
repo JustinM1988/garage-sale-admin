@@ -5,20 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Garage Sales Control Center</title>
 
-    <!-- Make all relative URLs resolve from your repo site -->
+    <!-- Resolve relative URLs correctly on GitHub Pages -->
     <base href="/garage-sale-admin/">
 
-    <!-- Esri theme (for Search widget styling) + your styles -->
+    <!-- Esri widget theme + your styles -->
     <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css?v=4.29">
-    <link rel="stylesheet" href="styles.css?v=admin-1">
+    <link rel="stylesheet" href="styles.css?v=admin-2">
 
-    <!-- Minimal fallback so the map shows even if styles.css is cached/missing -->
+    <!-- Minimal fallback to guarantee map height even if CSS is cached/missing -->
     <style>
       html, body { height: 100%; margin: 0; }
       .layout { min-height: calc(100vh - 56px); height: auto; }
       .map-panel { display: flex; min-height: 520px; }
       #map, .map { flex: 1; height: 60vh; min-height: 520px; }
       .btn { padding: 8px 12px; }
+      .select { padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06); color: #eee; }
     </style>
   </head>
   <body>
@@ -32,7 +33,22 @@
       <div class="actions">
         <button id="btnSales" class="btn btn-secondary">Sales</button>
         <button id="btnGuide" class="btn btn-secondary">Guide</button>
+
+        <!-- Quick filter -->
+        <select id="selFilter" class="select" title="Quick filter">
+          <option value="all">All sales</option>
+          <option value="weekend">This weekend</option>
+          <option value="next14">Next 14 days</option>
+          <option value="past">Past sales</option>
+        </select>
+
+        <!-- Theme toggle (cycles dark → dim → light) -->
+        <button id="btnTheme" class="btn btn-secondary" title="Toggle theme">Theme</button>
+
+        <!-- Admin (opens password-gated debug) -->
         <button id="btnAdmin" class="btn btn-secondary" title="Open Admin Debug">Admin</button>
+
+        <!-- Auth -->
         <button id="btnSignIn" class="btn">Sign in</button>
         <button id="btnSignOut" class="btn btn-secondary" style="display:none;">Sign out</button>
       </div>
@@ -47,7 +63,7 @@
 
         <div class="field-row">
           <label for="address">Address</label>
-          <input id="address" type="text" placeholder="e.g., 1024 Ocean Breeze St" />
+          <input id="address" type="text" placeholder="e.g., 2221 Mangrove Dr" />
         </div>
 
         <div class="grid-2">
@@ -98,7 +114,7 @@
 
         <div class="field-row">
           <label for="details">Sale details</label>
-          <textarea id="details" placeholder="What’s for sale? e.g., A Sofa, Dining Room Set, tools ..."></textarea>
+          <textarea id="details" placeholder="Women’s designer dresses, tea table/chairs, trundle bed ..."></textarea>
         </div>
 
         <div class="field-row">
@@ -134,7 +150,7 @@
     </main>
 
     <!-- Load app AFTER the DOM exists (one script only) -->
-    <script type="module" src="app.js?v=admin-1"></script>
+    <script type="module" src="app.js?v=admin-2"></script>
 
     <noscript>
       <p style="padding:12px">This app requires JavaScript.</p>
