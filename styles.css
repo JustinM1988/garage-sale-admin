@@ -131,3 +131,17 @@ body{
   .grid-2 { grid-template-columns: 1fr; row-gap: 12px; }
 }
 
+/* v3.3.2 — force map to have height no matter what */
+.layout{ min-height: calc(100vh - 56px); height:auto; }
+.map-panel{ display:flex; min-height: 520px; }
+#map, .map{ flex:1; height: 60vh; min-height: 520px; }
+
+/* spacing fix for End time crowding */
+.form-panel{ padding-right:22px; }
+.grid-2{ column-gap:18px; }
+.time-row{ gap:10px; flex-wrap:wrap; }
+.time-row input{ width:84px; }
+.time-row select{ min-width:120px; }
+
+
+
