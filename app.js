@@ -317,43 +317,83 @@ async function onDelete(){
 }
 
 async function showSalesList(){
-  const q = await layer.queryFeatures({ where: "1=1", outFields: ["*"], orderByFields: [FIELDS.start + " DESC"], returnGeometry: true, num: 200 });
-  const rows = q.features.map(f=>{ const a=f.attributes; const title=a[FIELDS.address]||"(no address)"; const sub=[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → "); return { oid:a[layer.objectIdField], title, sub, feature:f }; });
+  const q = await layer.queryFeatures({
+    where: "1=1",
+    outFields: ["*"],
+    orderByFields: [FIELDS.start + " DESC"],
+    returnGeometry: true,
+    num: 200
+  });
 
-  const body = document.createElement("div"); body.className="list";
-  body.innerHTML = rows.map(r=>`
+  const rows = q.features.map(f=>{
+    const a=f.attributes;
+    const title=a[FIELDS.address]||"(no address)";
+    const sub=[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → ");
+    return { oid:a[layer.objectIdField], title, sub, feature:f };
+  });
+
+  // Build body first
+  const body = document.createElement("div");
+  body.className="list";
+  body.innerHTML = rows.length ? rows.map(r=>`
     <div class="list-row" data-oid="${r.oid}">
-      <div class="meta"><span class="title">${r.title.replace(/</g,"&lt;")}</span><span>${r.sub}</span></div>
-      <div class="row-actions">
-        <button class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
-        <button class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
+      <div class="meta">
+        <span class="title">${r.title.replace(/</g,"&lt;")}</span>
+        <span>${r.sub}</span>
       </div>
-    </div>`).join("") || "<p>No sales found.</p>";
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
+        <button type="button" class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
+      </div>
+    </div>`).join("") : "<p>No sales found.</p>";
 
-  const wrap = document.createElement("div"); wrap.className="modal-backdrop";
+  // Modal wrapper
+  const wrap = document.createElement("div");
+  wrap.className="modal-backdrop";
   wrap.innerHTML = `<div class="modal glass">
-    <div class="modal-header"><div class="modal-title">Garage Sales</div><button class="modal-close" aria-label="Close">×</button></div>
+    <div class="modal-header">
+      <div class="modal-title">Garage Sales</div>
+      <button type="button" class="modal-close" aria-label="Close">×</button>
+    </div>
     <div class="modal-body"></div>
-    <div class="modal-actions"><button class="btn">Close</button></div></div>`;
+    <div class="modal-actions">
+      <button type="button" class="btn">Close</button>
+    </div>
+  </div>`;
+
   wrap.querySelector(".modal-body").appendChild(body);
-  wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".modal-actions .btn").onclick = ()=> wrap.remove();
   document.body.appendChild(wrap);
 
-  wrap.addEventListener("click", (e)=>{
-    const editBtn = e.target.closest(".btn-edit");
-    const delBtn  = e.target.closest(".btn-del");
-    if (editBtn){
-      const oid=+editBtn.dataset.oid; const f=rows.find(r=> r.oid===oid)?.feature;
+  // Close helpers
+  const closeModal = () => wrap.remove();
+  wrap.querySelector(".modal-close").addEventListener("click", closeModal);
+  wrap.querySelector(".modal-actions .btn").addEventListener("click", closeModal);
+  // ESC to close
+  const esc = (e)=>{ if(e.key==="Escape"){ closeModal(); window.removeEventListener("keydown",esc);} };
+  window.addEventListener("keydown", esc);
+
+  // Wire Edit/Delete directly (no delegation → more reliable)
+  body.querySelectorAll(".btn-edit").forEach(btn=>{
+    btn.addEventListener("click",(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const oid = +btn.dataset.oid;
+      const f = rows.find(r=> r.oid===oid)?.feature;
+      closeModal();                       // close immediately on first click
       if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
-      wrap.remove();
-    }
-    if (delBtn){
-      const oid=+delBtn.dataset.oid; const f=rows.find(r=> r.oid===oid)?.feature;
-      if (f){ wrap.remove(); selectedFeature=f; onDelete(); }
-    }
+    });
+  });
+
+  body.querySelectorAll(".btn-del").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const oid = +btn.dataset.oid;
+      const f = rows.find(r=> r.oid===oid)?.feature;
+      closeModal();                       // close immediately
+      if (f){ selectedFeature = f; await onDelete(); }
+    });
   });
 }
+
 
 async function showGuide(){
   const wrap = document.createElement("div"); wrap.className="modal-backdrop";
