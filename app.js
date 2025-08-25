@@ -1,15 +1,17 @@
-// v3.3 — custom icons, guarded map click (no add unless New), ghost pin, sign-in state
+// v3.3.3 — OSM fallback basemap (no key), close-all-modals on first Edit/Delete,
+// guarded map click (only add after New), ghost pin, cancel UX.
 
 import esriConfig from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
-
 
 const CONFIG = {
   LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL: "https://www.arcgis.com",
-  OAUTH_APPID: null,        // <- leave null for public editing; set to your AGOL OAuth appId to require login
+  OAUTH_APPID: null,        // set your AGOL OAuth appId to require login; keep null for public
   CENTER: [-97.323, 27.876],
   ZOOM: 13
 };
+// If you want ArcGIS basemaps, put your API key here; otherwise we use OSM (no key).
+const ARCGIS_API_KEY = null;
 
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
@@ -83,6 +85,9 @@ let map, view, layer, editLayer, ghostLayer, search;
 let selectedFeature=null, objectIdField="OBJECTID";
 let signedIn=false, inNewMode=false, ghostGraphic=null;
 
+// Close any open modal(s) immediately
+function closeAllModals(){ document.querySelectorAll(".modal-backdrop").forEach(n=>n.remove()); }
+
 // ---------- init ----------
 async function init(){
   // OAuth (only if you set an appId)
@@ -93,8 +98,18 @@ async function init(){
     catch { signedIn = false; }
   }
 
-  map = new Map({ basemap: "arcgis-dark-gray" });
+  // ---- Basemap with OSM fallback (prevents blank map when no API key) ----
+  if (ARCGIS_API_KEY){
+    esriConfig.apiKey = ARCGIS_API_KEY;
+    map = new Map({ basemap: "arcgis-dark-gray" });
+  } else {
+    map = new Map({ basemap: "osm" }); // keyless, reliable
+  }
   view = new MapView({ container:"map", map, center: CONFIG.CENTER, zoom: CONFIG.ZOOM });
+  view.when(
+    () => console.log("MapView ready"),
+    (err) => { console.error("MapView failed", err); toast("Map failed to initialize."); }
+  );
 
   // Feature layer with custom icon (pink)
   layer = new FeatureLayer({ url: CONFIG.LAYER_URL, outFields: ["*"], popupEnabled:false });
@@ -132,7 +147,7 @@ async function init(){
     }
   });
 
-  // --- CRITICAL: only add when inNewMode is true ---
+  // --- Only add when inNewMode is true ---
   view.on("click", async (ev)=>{
     if (!inNewMode){
       const ht = await view.hitTest(ev);
@@ -257,6 +272,7 @@ function loadForEdit(g){
   const label = [a[FIELDS.address], fmtYMD(a[FIELDS.start])].filter(Boolean).join(" — ");
   setStatus(`Editing: ${label}. Use Cancel to exit without saving.`);
 }
+
 function parseTimeFromDescription(text){
   const m = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
   if (!m) return;
@@ -335,7 +351,6 @@ async function showSalesList(){
     return { oid:a[layer.objectIdField], title, sub, feature:f };
   });
 
-  // Build body first
   const body = document.createElement("div");
   body.className="list";
   body.innerHTML = rows.length ? rows.map(r=>`
@@ -350,7 +365,6 @@ async function showSalesList(){
       </div>
     </div>`).join("") : "<p>No sales found.</p>";
 
-  // Modal wrapper
   const wrap = document.createElement("div");
   wrap.className="modal-backdrop";
   wrap.innerHTML = `<div class="modal glass">
@@ -367,36 +381,32 @@ async function showSalesList(){
   wrap.querySelector(".modal-body").appendChild(body);
   document.body.appendChild(wrap);
 
-  // Close helpers
   const closeModal = () => wrap.remove();
   wrap.querySelector(".modal-close").addEventListener("click", closeModal);
   wrap.querySelector(".modal-actions .btn").addEventListener("click", closeModal);
-  // ESC to close
   const esc = (e)=>{ if(e.key==="Escape"){ closeModal(); window.removeEventListener("keydown",esc);} };
   window.addEventListener("keydown", esc);
 
-  // Wire Edit/Delete directly (no delegation → more reliable)
+  // Close *all* modals immediately on first click (handles any stray overlays)
   body.querySelectorAll(".btn-edit").forEach(btn=>{
     btn.addEventListener("click",(e)=>{
       e.preventDefault(); e.stopPropagation();
       const oid = +btn.dataset.oid;
       const f = rows.find(r=> r.oid===oid)?.feature;
-      closeModal();                       // close immediately on first click
+      closeAllModals();                // <-- robust close
       if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
     });
   });
-
   body.querySelectorAll(".btn-del").forEach(btn=>{
     btn.addEventListener("click", async (e)=>{
       e.preventDefault(); e.stopPropagation();
       const oid = +btn.dataset.oid;
       const f = rows.find(r=> r.oid===oid)?.feature;
-      closeModal();                       // close immediately
+      closeAllModals();                // <-- robust close
       if (f){ selectedFeature = f; await onDelete(); }
     });
   });
 }
-
 
 async function showGuide(){
   const wrap = document.createElement("div"); wrap.className="modal-backdrop";
@@ -412,7 +422,7 @@ async function showGuide(){
     </div>
     <div class="modal-actions"><button class="btn">Got it</button></div></div>`;
   wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".btn").onclick = ()=> wrap.remove();
+  wrap.querySelector(".btn").onclick = ()=> closeAllModals();
   document.body.appendChild(wrap);
 }
 
