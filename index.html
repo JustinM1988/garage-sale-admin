@@ -5,9 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Garage Sales Control Center</title>
 
-    <!-- Esri theme + your styles -->
-    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
-    <link rel="stylesheet" href="./styles.css">
+    <!-- Esri theme + your styles (cache-busted) -->
+    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css?v=4.29">
+    <link rel="stylesheet" href="./styles.css?v=3.3">
+
+    <!-- Minimal fallback so the map & layout aren’t broken if styles.css doesn’t load -->
+    <style>
+      html, body { height: 100%; }
+      .map { min-height: 420px; }
+      /* Optional: make buttons readable in fallback mode */
+      .btn { padding: 8px 12px; }
+    </style>
   </head>
   <body>
 
@@ -120,7 +128,7 @@
 
     </main>
 
-    <!-- App -->
-    <script type="module" src="./app.js"></script>
+    <!-- App (cache-busted) -->
+    <script type="module" src="./app.js?v=3.3"></script>
   </body>
 </html>
