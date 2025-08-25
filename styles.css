@@ -143,5 +143,24 @@ body{
 .time-row input{ width:84px; }
 .time-row select{ min-width:120px; }
 
+/* Admin Debug panel (non-blocking, draggable) */
+.debug-panel {
+  position: fixed; top: 12px; right: 12px; z-index: 3000;
+  width: 380px; max-height: 70vh; display: none;
+}
+.debug-panel .debug-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 10px; border-bottom:1px solid var(--line);
+  cursor:move; user-select:none;
+}
+.debug-panel .debug-title { font-weight:800; font-size:12px; letter-spacing:.3px; }
+.debug-panel .debug-body { padding:8px 10px; overflow:auto; max-height:52vh; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.debug-panel .debug-footer { padding:8px 10px; border-top:1px solid var(--line); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--muted); }
+.debug-row { white-space:pre-wrap; word-break:break-word; }
+.debug-controls { display:flex; gap:6px; align-items:center; }
+.debug-btn { border:1px solid var(--line); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:4px 8px; font-size:12px; cursor:pointer; }
+.debug-badge { padding:2px 6px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.06); font-size:11px; }
+
+
 
 
