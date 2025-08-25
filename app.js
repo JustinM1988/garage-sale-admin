@@ -1,9 +1,9 @@
-// v3.3 — custom circle-house icons + correct sign-in state on load
+// v3.3 — custom icons, guarded map click (no add unless New), ghost pin, sign-in state
 
 const CONFIG = {
   LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL: "https://www.arcgis.com",
-  OAUTH_APPID: null, // <- leave null for NO login, or paste your AGOL OAuth appId to require login
+  OAUTH_APPID: null,        // <- leave null for public editing; set to your AGOL OAuth appId to require login
   CENTER: [-97.323, 27.876],
   ZOOM: 13
 };
@@ -21,8 +21,14 @@ import OAuthInfo from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInf
 import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 // ---------- tiny helpers ----------
-const $ = sel => document.querySelector(sel);
-function toast(msg){ const n=document.createElement("div"); n.className="toast glass"; n.innerHTML=`<span class="toast-text">${msg}</span>`; document.body.appendChild(n); setTimeout(()=>n.remove(),2400); }
+const $ = (sel) => document.querySelector(sel);
+function toast(msg){
+  const n=document.createElement("div");
+  n.className="toast glass";
+  n.innerHTML=`<span class="toast-text">${msg}</span>`;
+  document.body.appendChild(n);
+  setTimeout(()=>n.remove(),2400);
+}
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
 
 function toEpochMaybe(v){
@@ -58,7 +64,7 @@ function composeDescription(){
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
 
-// ---------- custom circle-house marker (SVG data URI) ----------
+// ---------- custom circle-house SVG (data URI) ----------
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -80,10 +86,8 @@ async function init(){
   if (CONFIG.OAUTH_APPID){
     const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
     esriId.registerOAuthInfos([info]);
-    try {
-      await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`);
-      signedIn = true;             // already signed in (SSO/session) — no “Sign in” flash
-    } catch { signedIn = false; }
+    try { await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`); signedIn = true; }
+    catch { signedIn = false; }
   }
 
   map = new Map({ basemap: "arcgis-dark-gray" });
@@ -102,7 +106,7 @@ async function init(){
   };
   map.add(layer);
 
-  // layers for editing + ghost cursor
+  // graphics for editing + ghost cursor
   editLayer = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
@@ -125,17 +129,18 @@ async function init(){
     }
   });
 
-  // click: edit existing or place new
+  // --- CRITICAL: only add when inNewMode is true ---
   view.on("click", async (ev)=>{
     if (!inNewMode){
       const ht = await view.hitTest(ev);
       const g = ht.results.find(r=> r.graphic?.layer === layer)?.graphic;
-      if (g){ loadForEdit(g); return; }
+      if (g) loadForEdit(g);
+      return; // do not place points unless New was pressed
     }
     finalizePlacement(ev.mapPoint);
   });
 
-  // wire up UI
+  // UI wires
   $("#btnSave")?.addEventListener("click", onSave);
   $("#btnNew")?.addEventListener("click", ()=> enterAddMode());
   $("#btnCancel")?.addEventListener("click", cancelEditing);
@@ -147,16 +152,12 @@ async function init(){
     if (!CONFIG.OAUTH_APPID){ toast("Sign-in not required."); return; }
     try{
       await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`);
-      signedIn = true;
-      toast("Signed in.");
-      updateAuthUI();
+      signedIn = true; toast("Signed in."); updateAuthUI();
     }catch(e){ /* cancelled */ }
   });
   $("#btnSignOut")?.addEventListener("click", ()=>{
     esriId.destroyCredentials();
-    signedIn=false;
-    toast("Signed out.");
-    updateAuthUI();
+    signedIn=false; toast("Signed out."); updateAuthUI();
   });
 
   ["timeStartHour","timeStartMin","timeStartAmPm","timeEndHour","timeEndMin","timeEndAmPm","details","chkCompose"]
@@ -165,15 +166,19 @@ async function init(){
 
   updateAuthUI();
 
-  view.watch("center", ()=>{ const c=view.center; const el=$("#coords"); if(el) el.textContent=`Lon: ${c.longitude.toFixed(5)} • Lat: ${c.latitude.toFixed(5)}`; });
+  view.watch("center", ()=>{
+    const c=view.center;
+    const el=$("#coords");
+    if(el) el.textContent=`Lon: ${c.longitude.toFixed(5)} • Lat: ${c.latitude.toFixed(5)}`;
+  });
 
-  setStatus("Click an existing sale to edit, or click map to add a new one.");
+  setStatus("Click a sale to edit, or click New to add a sale.");
 }
 
 function updateAuthUI(){
   const inUse = !!CONFIG.OAUTH_APPID;
   const signInBtn = $("#btnSignIn"), signOutBtn = $("#btnSignOut");
-  if (!inUse){ // public editing
+  if (!inUse){
     if (signInBtn) signInBtn.style.display = "none";
     if (signOutBtn) signOutBtn.style.display = "none";
     return;
@@ -206,7 +211,7 @@ function cancelEditing(){
   $("#btnCancel") && ($("#btnCancel").style.display="none");
   $("#modeChip") && ($("#modeChip").style.display="none");
   ghostLayer.removeAll(); editLayer.removeAll();
-  setStatus("Cancelled new sale. Click a sale to edit, or click map to add a new one.");
+  setStatus("Cancelled new sale. Click a sale to edit, or click New to add.");
 }
 
 function placePoint(lon, lat){
@@ -251,7 +256,7 @@ function attributesFromForm(){
 
 async function onSave(){
   if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to save."); return; }
-  if (editLayer.graphics.length === 0) return toast("Click the map to place a point.");
+  if (editLayer.graphics.length === 0) return toast("Click New, then click the map to place a point.");
 
   const geom = editLayer.graphics.getItemAt(0).geometry;
   const attrs = attributesFromForm();
@@ -307,7 +312,6 @@ async function showSalesList(){
       </div>
     </div>`).join("") || "<p>No sales found.</p>";
 
-  // quick inline modal
   const wrap = document.createElement("div"); wrap.className="modal-backdrop";
   wrap.innerHTML = `<div class="modal glass">
     <div class="modal-header"><div class="modal-title">Garage Sales</div><button class="modal-close" aria-label="Close">×</button></div>
@@ -315,7 +319,7 @@ async function showSalesList(){
     <div class="modal-actions"><button class="btn">Close</button></div></div>`;
   wrap.querySelector(".modal-body").appendChild(body);
   wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".btn").onclick = ()=> wrap.remove();
+  wrap.querySelector(".modal-actions .btn").onclick = ()=> wrap.remove();
   document.body.appendChild(wrap);
 
   wrap.addEventListener("click", (e)=>{
