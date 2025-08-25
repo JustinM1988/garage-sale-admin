@@ -1,25 +1,32 @@
-// v3.6 — Admin Debug panel (password 123456), enhanced logging, OSM fallback,
-// ghost pin in New mode, guarded add, cancel UX, sales modal close-once.
+// v3.7 — Required sign-in (OAuth), Admin debug (password 123456) with CSV export,
+// quick filters, theme toggle, OSM fallback basemap, ghost pin in New mode,
+// guarded add (no add by map click unless New), reliable edit/Cancel UX.
 
-import esriConfig   from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
-import Map          from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
-import MapView      from "https://js.arcgis.com/4.29/@arcgis/core/views/MapView.js";
-import FeatureLayer from "https://js.arcgis.com/4.29/@arcgis/core/layers/FeatureLayer.js";
+import esriConfig    from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
+import Map           from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
+import MapView       from "https://js.arcgis.com/4.29/@arcgis/core/views/MapView.js";
+import FeatureLayer  from "https://js.arcgis.com/4.29/@arcgis/core/layers/FeatureLayer.js";
 import GraphicsLayer from "https://js.arcgis.com/4.29/@arcgis/core/layers/GraphicsLayer.js";
-import Graphic      from "https://js.arcgis.com/4.29/@arcgis/core/Graphic.js";
-import Search       from "https://js.arcgis.com/4.29/@arcgis/core/widgets/Search.js";
-import OAuthInfo    from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInfo.js";
-import esriId       from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
+import Graphic       from "https://js.arcgis.com/4.29/@arcgis/core/Graphic.js";
+import Search        from "https://js.arcgis.com/4.29/@arcgis/core/widgets/Search.js";
+import OAuthInfo     from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInfo.js";
+import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 // ------------------ Config ------------------
+// IMPORTANT: To REQUIRE ArcGIS sign-in, set OAUTH_APPID to your app's ID from
+// ArcGIS Online (Content > New item > Application > OAuth 2.0). Add your GitHub
+// Pages URL as the Redirect URI: https://justinm1988.github.io/garage-sale-admin/
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL:  "https://www.arcgis.com",
-  OAUTH_APPID: null,           // set your AGOL OAuth appId to require login; keep null for public
+  OAUTH_APPID: null,        // ← set to your real appId to enable ArcGIS sign-in
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
 };
-// ArcGIS basemap key (optional). Leave null to use OSM (no key needed).
+// Require sign-in to add/update/delete
+const REQUIRE_SIGN_IN = true;
+
+// ArcGIS basemap key (optional). Leave null to use OSM (no key).
 const ARCGIS_API_KEY = null;
 
 // layer field names
@@ -67,8 +74,6 @@ function composeDescription(){
   return details ? `${time}: ${details}` : time;
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
-
-// Custom icon
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -78,22 +83,31 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
+function sqlTs(d){ // TIMESTAMP 'YYYY-MM-DD HH:MM:SS'
+  const pad=(n)=> String(n).padStart(2,"0");
+  const s = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `TIMESTAMP '${s}'`;
+}
 
-// ------------------ Admin Debug panel ------------------
+// ------------------ Admin Debug (password-gated) ------------------
 const ADMIN_PASSWORD = "123456";
-let dbg = null, debugEnabled = false, debugPaused = false, debugVerbose = false;
+let dbg = null, debugEnabled=false, debugPaused=false, debugVerbose=false;
 
-function createDebugPanel(){
+function ensureDebugPanel(){
   if (dbg) return dbg;
   const wrap = document.createElement("div");
   wrap.className = "debug-panel glass";
+  wrap.style.display = "none";
   wrap.innerHTML = `
     <div class="debug-header">
       <div class="debug-title">Admin Debug</div>
       <div class="debug-controls">
         <span id="dbgBasemap" class="debug-badge">basemap: —</span>
+        <span id="dbgFilter" class="debug-badge">filter: all</span>
         <button id="dbgPause" class="debug-btn">Pause</button>
         <button id="dbgVerbose" class="debug-btn">Verbose: Off</button>
+        <button id="dbgExport" class="debug-btn">Export CSV</button>
+        <button id="dbgArchive" class="debug-btn" title="Delete older than…">Archive…</button>
         <button id="dbgClear" class="debug-btn">Clear</button>
         <button id="dbgCopy" class="debug-btn">Copy</button>
         <button id="dbgClose" class="debug-btn">Close</button>
@@ -104,37 +118,38 @@ function createDebugPanel(){
   `;
   document.body.appendChild(wrap);
 
-  // drag by header
+  // Drag by header
   const header = wrap.querySelector(".debug-header");
   let drag=false, sx=0, sy=0, ox=0, oy=0;
-  header.addEventListener("mousedown", (e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
+  header.addEventListener("mousedown",(e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
   window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
-  window.addEventListener("mouseup", ()=> drag=false);
+  window.addEventListener("mouseup",()=> drag=false);
 
-  // controls
-  wrap.querySelector("#dbgPause").onclick = ()=>{
-    debugPaused = !debugPaused;
-    wrap.querySelector("#dbgPause").textContent = debugPaused ? "Resume" : "Pause";
-    log(`[debug] ${debugPaused ? "paused" : "resumed"}`);
-  };
-  wrap.querySelector("#dbgVerbose").onclick = ()=>{
-    debugVerbose = !debugVerbose;
-    wrap.querySelector("#dbgVerbose").textContent = `Verbose: ${debugVerbose ? "On" : "Off"}`;
-    log(`[debug] verbose ${debugVerbose ? "enabled" : "disabled"}`);
-  };
+  // Controls
+  wrap.querySelector("#dbgPause").onclick = ()=>{ debugPaused=!debugPaused; wrap.querySelector("#dbgPause").textContent = debugPaused?"Resume":"Pause"; log(`[debug] ${debugPaused?"paused":"resumed"}`); };
+  wrap.querySelector("#dbgVerbose").onclick = ()=>{ debugVerbose=!debugVerbose; wrap.querySelector("#dbgVerbose").textContent=`Verbose: ${debugVerbose?"On":"Off"}`; log(`[debug] verbose ${debugVerbose?"enabled":"disabled"}`); };
   wrap.querySelector("#dbgClear").onclick = ()=>{ wrap.querySelector("#dbgBody").innerHTML=""; };
-  wrap.querySelector("#dbgCopy").onclick = ()=>{
+  wrap.querySelector("#dbgCopy").onclick  = ()=>{
     const text = [...wrap.querySelectorAll(".debug-row")].map(d=>d.textContent).join("\n");
-    navigator.clipboard?.writeText(text);
-    toast("Debug copied");
+    navigator.clipboard?.writeText(text); toast("Debug copied");
   };
   wrap.querySelector("#dbgClose").onclick = ()=>{ wrap.style.display="none"; debugEnabled=false; };
 
-  // error pipes
+  // Admin tools
+  wrap.querySelector("#dbgExport").onclick = exportCSV;
+  wrap.querySelector("#dbgArchive").onclick = archiveDialog;
+
+  // Error pipes
   window.addEventListener("error",(e)=> log(`JS Error: ${e.message}`, "err"));
   window.addEventListener("unhandledrejection",(e)=> log(`Unhandled: ${e.reason}`, "err"));
 
-  dbg = { wrap, log, footer:updateFooter, setBasemap };
+  dbg = {
+    wrap,
+    log,
+    footer:(t)=> wrap.querySelector("#dbgFooter").textContent = t,
+    setBasemap:(t)=> wrap.querySelector("#dbgBasemap").textContent = `basemap: ${t}`,
+    setFilterBadge:(t)=> wrap.querySelector("#dbgFilter").textContent = `filter: ${t}`
+  };
   return dbg;
 
   function log(msg, level="info"){
@@ -147,106 +162,85 @@ function createDebugPanel(){
     body.appendChild(row);
     body.scrollTop = body.scrollHeight;
   }
-  function updateFooter(info){
-    if (!debugEnabled) return;
-    wrap.querySelector("#dbgFooter").textContent = info;
-  }
-  function setBasemap(txt){
-    wrap.querySelector("#dbgBasemap").textContent = `basemap: ${txt}`;
-  }
 }
 function openAdmin(){
-  if (debugEnabled){ dbg?.wrap && (dbg.wrap.style.display="block"); return; }
+  ensureDebugPanel();
+  if (debugEnabled){ dbg.wrap.style.display="block"; return; }
   const pass = prompt("Enter admin password:");
   if (pass !== ADMIN_PASSWORD){ toast("Wrong password"); return; }
-  createDebugPanel();
   debugEnabled = true;
   dbg.wrap.style.display = "block";
-  log(`Admin debug opened (verbose ${debugVerbose ? "on" : "off"})`);
+  log(`Admin debug opened`);
 }
-function log(msg, level){ createDebugPanel(); dbg.log(msg, level); }
-function updateFooter(){ if (!view) return; const c=view.center; const info=`center: ${c.longitude.toFixed(5)}, ${c.latitude.toFixed(5)}  |  zoom: ${view.zoom}  |  scale: ${Math.round(view.scale).toLocaleString()}  |  features: ${_featureCount}`; dbg?.footer(info); }
-function setBasemapBadge(txt){ dbg?.setBasemap(txt); }
+function log(msg, level){ ensureDebugPanel(); dbg.log(msg, level); }
+function setBasemapBadge(t){ ensureDebugPanel(); dbg.setBasemap(t); }
+function setFilterBadge(t){ ensureDebugPanel(); dbg.setFilterBadge(t); }
+function updateFooter(){
+  if (!view) return;
+  const c=view.center;
+  const info=`center: ${c.longitude.toFixed(5)}, ${c.latitude.toFixed(5)}  |  zoom: ${view.zoom}  |  scale: ${Math.round(view.scale).toLocaleString()}  |  features: ${_featureCount}`;
+  dbg?.footer(info);
+}
 
 // ------------------ App state ------------------
 let map, view, layer, editLayer, ghostLayer, ghostGraphic, search;
 let selectedFeature=null, objectIdField="OBJECTID";
 let signedIn=false, inNewMode=false, _featureCount=0;
 
-function closeAllModals(){ document.querySelectorAll(".modal-backdrop").forEach(n=>n.remove()); }
-
 // ------------------ Init ------------------
 async function init(){
-  // Wire Admin button
+  // Wire header controls
   $("#btnAdmin")?.addEventListener("click", openAdmin);
+  $("#btnTheme")?.addEventListener("click", cycleTheme);
+  $("#selFilter")?.addEventListener("change", (e)=> applyQuickFilter(e.target.value));
 
-  log(`app v3.6 starting`);
+  log(`app v3.7 starting`);
   log(`UA: ${navigator.userAgent}`);
-
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv){ log(`#map not found in DOM`, "err"); return; }
-
-  // Self-fix height if needed
-  const h = mapDiv.offsetHeight, w = mapDiv.offsetWidth;
-  log(`map div size: ${w} x ${h}px`);
-  if (h < 200){ mapDiv.style.minHeight="520px"; mapDiv.style.height="60vh"; log(`map div too short; applied height fix`, "warn"); }
-
-  // Optional OAuth
-  if (CONFIG.OAUTH_APPID){
-    try{
-      const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
-      esriId.registerOAuthInfos([info]);
-      await esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`);
-      signedIn=true; log(`OAuth signed in`);
-    }catch{ log(`OAuth not signed in`); }
-  }
 
   // Basemap
   if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); }
   else { map = new Map({ basemap:"osm" }); setBasemapBadge("osm"); log(`basemap: OSM (no key)`); }
 
+  // View
   view = new MapView({ container:"map", map, center: CONFIG.CENTER, zoom: CONFIG.ZOOM });
   view.when(
-    () => { log("MapView ready"); updateFooter(); },
-    (err) => { log(`MapView failed: ${err?.message||err}`, "err"); toast("Map failed to initialize."); }
+    ()=>{ log("MapView ready"); updateFooter(); },
+    (err)=>{ log(`MapView failed: ${err?.message||err}`, "err"); toast("Map failed to initialize."); }
   );
 
-  // Feature layer
+  // Layer
   layer = new FeatureLayer({ url: CONFIG.LAYER_URL, outFields:["*"], popupEnabled:false });
-  layer.renderer = { type:"simple", symbol:{ type:"picture-marker", url:houseSvg("#ff4aa2","#ffffff"), width:"24px", height:"24px", yoffset:8 } };
+  layer.renderer = { type:"simple", symbol:{ type:"picture-marker", url: houseSvg("#ff4aa2","#ffffff"), width:"24px", height:"24px", yoffset:8 } };
   map.add(layer);
 
   try{
     await layer.load();
     objectIdField = layer.objectIdField;
     log(`layer loaded, OID field: ${objectIdField}`);
-    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
-    log(`feature count: ${_featureCount}`);
-    updateFooter();
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" }); updateFooter();
 
-    view.whenLayerView(layer).then(lv=>{
+    view.whenLayerView(layer).then((lv)=>{
       log(`layerview created`);
-      lv.watch("updating", (u)=> log(`layerview updating: ${u}`));
-    }).catch(err=> log(`whenLayerView error: ${err?.message||err}`, "err"));
+      lv.watch("updating",(u)=> log(`layerview updating: ${u}`));
+    }).catch(e=> log(`whenLayerView error: ${e?.message||e}`, "err"));
   }catch(e){ log(`layer load error: ${e?.message||e}`, "err"); }
 
-  // Layers used while editing
+  // Editing helper layers
   editLayer  = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
-  // Search widget + diagnostics
-  search = new Search({ view });
-  view.ui.add(search, "top-right");
-  search.on("search-complete", (e)=> log(`search-complete: ${e.numResults} providers`));
-  search.on("select-result", (e)=> log(`select-result: ${e.result?.name||"(no name)"}`));
-  search.on("search-clear", ()=> log(`search cleared`));
-  search.on("search-error", (e)=> log(`search-error: ${e.error?.message||e}`, "err"));
+  // Search widget + logs
+  search = new Search({ view }); view.ui.add(search, "top-right");
+  search.on("select-result", (e)=> log(`select-result: ${e.result?.name || "(no name)"}`));
 
-  // Ghost pin follows the mouse in New mode (throttled)
-  let lastMoveT=0;
+  // OAuth (enables Sign in/out & gating)
+  wireAuth();
+
+  // Ghost pin while in New mode (throttled unless verbose)
+  let lastMove=0;
   view.on("pointer-move", (e)=>{
     if (!inNewMode) return;
-    const now = performance.now(); if (!debugVerbose && now-lastMoveT<250) return; lastMoveT=now;
+    const now = performance.now(); if (!debugVerbose && now-lastMove<250) return; lastMove = now;
     const mp = view.toMap({ x:e.x, y:e.y }); if (!mp) return;
     if (!ghostGraphic){
       ghostGraphic = new Graphic({
@@ -257,77 +251,135 @@ async function init(){
     } else {
       ghostGraphic.geometry = mp;
     }
-    if (debugVerbose) log(`pointer ${mp.longitude.toFixed(5)}, ${mp.latitude.toFixed(5)}`);
   });
 
-  // Map click: select vs place
+  // Guarded click: Select existing when not in New; only place when in New
   view.on("click", async (ev)=>{
-    const p = ev.mapPoint;
     if (!inNewMode){
       const ht = await view.hitTest(ev);
       const g = ht.results.find(r=> r.graphic?.layer === layer)?.graphic;
-      if (g){ log(`select ${g.attributes?.[objectIdField] ?? "?"}`); loadForEdit(g); }
-      else { log(`click on map (no feature)`); }
+      if (g){ loadForEdit(g); }
+      else { toast("Click New to add a sale."); }
       return;
     }
-    log(`place at ${p.longitude.toFixed(5)}, ${p.latitude.toFixed(5)}`);
-    finalizePlacement(p);
+    finalizePlacement(ev.mapPoint);
   });
 
-  // View telemetry (throttled)
+  // Live footer
   let lastT=0;
   view.watch(["center","zoom","scale"], ()=>{
     const now = performance.now(); if (now-lastT<400) return; lastT=now;
     updateFooter();
-    if (debugVerbose) log(`view: zoom=${view.zoom} scale=${Math.round(view.scale)}`);
   });
 
-  // Online/offline
-  window.addEventListener("online", ()=> log("network: online"));
-  window.addEventListener("offline",()=> log("network: offline"));
-
-  // UI events
-  $("#btnSave")  ?.addEventListener("click", onSave);
-  $("#btnNew")   ?.addEventListener("click", enterAddMode);
-  $("#btnCancel")?.addEventListener("click", cancelEditing);
-  $("#btnDelete")?.addEventListener("click", onDelete);
-  $("#btnSales") ?.addEventListener("click", showSalesList);
-  $("#btnGuide") ?.addEventListener("click", showGuide);
-
-  $("#btnSignIn") ?.addEventListener("click", async ()=>{
-    if (!CONFIG.OAUTH_APPID){ toast("Sign-in not required."); return; }
-    try{ await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`); signedIn=true; toast("Signed in."); updateAuthUI(); log("OAuth: signed in"); }
-    catch(_){} // cancelled
-  });
-  $("#btnSignOut")?.addEventListener("click", ()=>{
-    esriId.destroyCredentials(); signedIn=false; toast("Signed out."); updateAuthUI(); log("OAuth: signed out");
-  });
-
+  // Form → description composer
   ["timeStartHour","timeStartMin","timeStartAmPm","timeEndHour","timeEndMin","timeEndAmPm","details","chkCompose"]
     .forEach(id=> $("#"+id)?.addEventListener("input", syncDesc));
   syncDesc();
 
-  updateAuthUI();
+  // Wire buttons
+  $("#btnSave")  ?.addEventListener("click", onSave);
+  $("#btnNew")   ?.addEventListener("click", enterAddMode);
+  $("#btnCancel")?.addEventListener("click", cancelEditing);
+  $("#btnDelete")?.addEventListener("click", onDelete);
+
   setStatus("Click a sale to edit, or click New to add a sale.");
 }
 
-// ------------------ Auth UI ------------------
+// ------------------ Auth wiring ------------------
+function wireAuth(){
+  // Always show Sign in button so it's obvious (even if appId not set)
+  $("#btnSignIn").style.display = "inline-block";
+  $("#btnSignOut").style.display = "none";
+
+  if (!CONFIG.OAUTH_APPID){
+    $("#btnSignIn").onclick = ()=> toast("Configure OAuth appId to enable ArcGIS sign-in.");
+    disableEditingUI(true);
+    return;
+  }
+
+  const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
+  esriId.registerOAuthInfos([info]);
+
+  // Try to auto-detect session
+  esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`).then(()=>{
+    signedIn = true; updateAuthUI();
+  }).catch(()=>{ signedIn = false; updateAuthUI(); });
+
+  $("#btnSignIn").onclick = async ()=>{
+    try{
+      await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`);
+      signedIn = true; updateAuthUI(); toast("Signed in.");
+    }catch(_){}
+  };
+  $("#btnSignOut").onclick = ()=>{
+    esriId.destroyCredentials();
+    signedIn=false; updateAuthUI(); toast("Signed out.");
+  };
+}
 function updateAuthUI(){
-  const inUse = !!CONFIG.OAUTH_APPID;
-  const signInBtn = $("#btnSignIn"), signOutBtn = $("#btnSignOut");
-  if (!inUse){ signInBtn && (signInBtn.style.display="none"); signOutBtn && (signOutBtn.style.display="none"); return; }
-  if (signedIn){ signInBtn && (signInBtn.style.display="none"); signOutBtn && (signOutBtn.style.display="inline-block"); }
-  else { signInBtn && (signInBtn.style.display="inline-block"); signOutBtn && (signOutBtn.style.display="none"); }
+  $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
+  $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
+  disableEditingUI(REQUIRE_SIGN_IN && !signedIn);
+}
+function disableEditingUI(disable){
+  ["btnNew","btnSave","btnDelete"].forEach(id=>{
+    const b=$("#"+id); if (!b) return;
+    b.disabled = !!disable;
+    b.title = disable ? "Sign in to edit" : "";
+  });
+}
+
+// ------------------ Quick filter ------------------
+function applyQuickFilter(kind){
+  const now = new Date();
+  let start = null, end = null, label = "all";
+  if (kind==="weekend"){
+    // next Saturday 00:00 to Sunday 23:59:59
+    const d = new Date(now);
+    const dow = d.getDay();
+    const add = (6 - dow + 7) % 7; // days to Saturday
+    const sat = new Date(d.getFullYear(), d.getMonth(), d.getDate()+add, 0,0,0);
+    const sun = new Date(sat.getFullYear(), sat.getMonth(), sat.getDate()+1, 23,59,59);
+    start = sat; end = sun; label = "weekend";
+  } else if (kind==="next14"){
+    start = now; end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+14, 23,59,59); label = "next14";
+  } else if (kind==="past"){
+    start = null; end = now; label = "past";
+  }
+
+  let where="1=1";
+  if (label==="weekend" || label==="next14"){
+    const ts1 = sqlTs(start), ts2 = sqlTs(end);
+    // show if it overlaps the window: start <= endWindow AND (end IS NULL OR end >= startWindow)
+    where = `(${FIELDS.start} <= ${ts2}) AND (${FIELDS.end} IS NULL OR ${FIELDS.end} >= ${ts1})`;
+  } else if (label==="past"){
+    const ts = sqlTs(end);
+    where = `${FIELDS.end} < ${ts}`;
+  }
+  layer.definitionExpression = where;
+  setFilterBadge(label);
+  log(`filter applied: ${label}`);
+}
+
+// ------------------ Theme toggle ------------------
+function cycleTheme(){
+  const order = ["dark","dim","light"];
+  const cur = document.documentElement.getAttribute("data-theme") || "dark";
+  const idx = order.indexOf(cur);
+  const next = order[(idx+1)%order.length];
+  document.documentElement.setAttribute("data-theme", next);
+  toast(`Theme: ${next}`);
 }
 
 // ------------------ Add / Edit flow ------------------
 function enterAddMode(){
+  if (REQUIRE_SIGN_IN && !signedIn) { toast("Sign in to add."); return; }
   inNewMode = true;
   $("#btnCancel") && ($("#btnCancel").style.display="inline-block");
   $("#modeChip") && ($("#modeChip").style.display="inline-block");
   editLayer.removeAll(); ghostLayer.removeAll(); ghostGraphic=null;
   setStatus("Add mode — move the cursor and click to place the sale.");
-  log("mode: New");
 }
 function finalizePlacement(mp){
   if (!mp) return;
@@ -345,7 +397,6 @@ function cancelEditing(){
   editLayer.removeAll();
   $("#address").value = ""; $("#descriptionRaw").value=""; $("#dateStart").value=""; $("#dateEnd").value="";
   setStatus("Exited editing. Click a sale to edit, or click New to add.");
-  log("mode: cancel");
 }
 function placePoint(lon, lat){
   editLayer.removeAll();
@@ -354,7 +405,6 @@ function placePoint(lon, lat){
     symbol:{ type:"picture-marker", url: houseSvg("#3cf0d4","#0b1118"), width:"32px", height:"32px" }
   }));
 }
-
 function loadForEdit(g){
   selectedFeature = g; inNewMode = false;
   $("#btnCancel") && ($("#btnCancel").style.display="inline-block");
@@ -368,7 +418,6 @@ function loadForEdit(g){
   placePoint(g.geometry.longitude, g.geometry.latitude);
   const label = [a[FIELDS.address], fmtYMD(a[FIELDS.start])].filter(Boolean).join(" — ");
   setStatus(`Editing: ${label}. Use Cancel to exit without saving.`);
-  log(`edit OID=${a[objectIdField]}`);
 }
 function parseTimeFromDescription(text){
   const m = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -389,7 +438,7 @@ function attributesFromForm(){
   };
 }
 async function onSave(){
-  if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to save."); return; }
+  if (REQUIRE_SIGN_IN && !signedIn) { toast("Sign in to save."); return; }
   if (editLayer.graphics.length === 0) return toast("Click New, then click the map to place a point.");
 
   const geom  = editLayer.graphics.getItemAt(0).geometry;
@@ -412,103 +461,76 @@ async function onSave(){
     if (r?.error) throw r.error;
 
     const oid = r.objectId || (selectedFeature?.attributes?.[layer.objectIdField]);
-    log(`applyEdits ok (oid=${oid})`);
     const q = await layer.queryFeatures({ objectIds:[oid], returnGeometry:true, outFields:["*"] });
     if (q.features.length) loadForEdit(q.features[0]);
 
-    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
-    updateFooter();
-
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" }); updateFooter();
     toast(selectedFeature ? "Sale updated." : "Sale added.");
     inNewMode=false; $("#btnCancel")?.style && ($("#btnCancel").style.display="none");
     $("#modeChip")?.style && ($("#modeChip").style.display="none");
-  }catch(e){ console.error(e); log(`applyEdits error: ${e?.message||e}`, "err"); toast("Save failed (permissions or network)."); }
+  }catch(e){ console.error(e); toast("Save failed (permissions or network)."); }
 }
 async function onDelete(){
-  if (CONFIG.OAUTH_APPID && !signedIn) { toast("Sign in to delete."); return; }
+  if (REQUIRE_SIGN_IN && !signedIn) { toast("Sign in to delete."); return; }
   if (!selectedFeature) return toast("Select a sale first.");
   try{
     const r = await layer.applyEdits({ deleteFeatures: [{ objectId: selectedFeature.attributes[layer.objectIdField] }] });
     if (r.deleteFeatureResults?.[0]?.error) throw r.deleteFeatureResults[0].error;
-    log(`delete ok (oid=${selectedFeature.attributes[layer.objectIdField]})`);
     editLayer.removeAll(); selectedFeature=null;
     $("#address").value = ""; $("#descriptionRaw").value=""; $("#dateStart").value=""; $("#dateEnd").value="";
-    _featureCount = await layer.queryFeatureCount({ where:"1=1" });
-    updateFooter();
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" }); updateFooter();
     toast("Deleted.");
-  }catch(e){ console.error(e); log(`delete error: ${e?.message||e}`, "err"); toast("Delete failed."); }
+  }catch(e){ console.error(e); toast("Delete failed."); }
 }
 
-// ------------------ Sales list + Guide ------------------
-async function showSalesList(){
-  const q = await layer.queryFeatures({ where:"1=1", outFields:["*"], orderByFields:[FIELDS.start+" DESC"], returnGeometry:true, num:200 });
-  const rows = q.features.map(f=>{ const a=f.attributes; return {
-    oid:a[layer.objectIdField],
-    title:a[FIELDS.address]||"(no address)",
-    sub:[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → "),
-    feature:f
-  }; });
-
-  const body = document.createElement("div");
-  body.className="list";
-  body.innerHTML = rows.length ? rows.map(r=>`
-    <div class="list-row" data-oid="${r.oid}">
-      <div class="meta"><span class="title">${r.title.replace(/</g,"&lt;")}</span><span>${r.sub}</span></div>
-      <div class="row-actions">
-        <button type="button" class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
-        <button type="button" class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
-      </div>
-    </div>`).join("") : "<p>No sales found.</p>";
-
-  const wrap = document.createElement("div");
-  wrap.className="modal-backdrop";
-  wrap.innerHTML = `<div class="modal glass">
-    <div class="modal-header"><div class="modal-title">Garage Sales</div><button type="button" class="modal-close" aria-label="Close">×</button></div>
-    <div class="modal-body"></div>
-    <div class="modal-actions"><button type="button" class="btn">Close</button></div>
-  </div>`;
-  wrap.querySelector(".modal-body").appendChild(body);
-  document.body.appendChild(wrap);
-
-  const closeModal = () => wrap.remove();
-  wrap.querySelector(".modal-close").addEventListener("click", closeModal);
-  wrap.querySelector(".modal-actions .btn").addEventListener("click", closeModal);
-  const esc = (e)=>{ if(e.key==="Escape"){ closeModal(); window.removeEventListener("keydown",esc);} };
-  window.addEventListener("keydown", esc);
-
-  body.querySelectorAll(".btn-edit").forEach(btn=>{
-    btn.addEventListener("click",(e)=>{
-      e.preventDefault(); e.stopPropagation();
-      const oid = +btn.dataset.oid; const f = rows.find(r=> r.oid===oid)?.feature;
-      closeAllModals(); if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
+// ------------------ Admin Tools ------------------
+async function exportCSV(){
+  try{
+    const q = await layer.queryFeatures({
+      where: layer.definitionExpression || "1=1",
+      outFields: [FIELDS.address, FIELDS.description, FIELDS.start, FIELDS.end, layer.objectIdField],
+      returnGeometry: false
     });
-  });
-  body.querySelectorAll(".btn-del").forEach(btn=>{
-    btn.addEventListener("click", async (e)=>{
-      e.preventDefault(); e.stopPropagation();
-      const oid = +btn.dataset.oid; const f = rows.find(r=> r.oid===oid)?.feature;
-      closeAllModals(); if (f){ selectedFeature = f; await onDelete(); }
+    const rows = q.features.map(f=>{
+      const a=f.attributes;
+      return [
+        a[layer.objectIdField],
+        (a[FIELDS.address]||"").replaceAll('"','""'),
+        (a[FIELDS.description]||"").replaceAll('"','""'),
+        fmtYMD(a[FIELDS.start]),
+        fmtYMD(a[FIELDS.end])
+      ];
     });
-  });
+    const header = ["OBJECTID","Address","Description","StartDate","EndDate"];
+    const csv = [header, ...rows].map(r=> r.map(c=> `"${c??""}"`).join(",")).join("\n");
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "garage_sales.csv"; a.click();
+    URL.revokeObjectURL(url);
+    toast("CSV exported");
+  }catch(e){ console.error(e); toast("Export failed."); }
 }
 
-async function showGuide(){
-  const wrap = document.createElement("div"); wrap.className="modal-backdrop";
-  wrap.innerHTML = `<div class="modal glass">
-    <div class="modal-header"><div class="modal-title">Quick Guide</div><button class="modal-close" aria-label="Close">×</button></div>
-    <div class="modal-body">
-      <ol style="line-height:1.7;">
-        <li><strong>Add a sale:</strong> click <em>New</em>. A ghost pin follows your cursor — click to place. Fill the form, then <em>Save</em>. Use <em>Cancel</em> to exit.</li>
-        <li><strong>Edit a sale:</strong> click a point on the map or open <em>Sales</em> → <em>Edit</em>.</li>
-        <li><strong>Delete:</strong> select a sale, then <em>Delete</em>.</li>
-        <li><strong>Description:</strong> auto-composed from time + details; uncheck to type your own.</li>
-      </ol>
-    </div>
-    <div class="modal-actions"><button class="btn">Got it</button></div></div>`;
-  wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
-  wrap.querySelector(".btn").onclick        = ()=> closeAllModals();
-  document.body.appendChild(wrap);
+async function archiveDialog(){
+  if (REQUIRE_SIGN_IN && !signedIn) { toast("Sign in required."); return; }
+  const s = prompt("Archive (delete) sales ended more than N days ago.\nEnter N (e.g., 30):");
+  const days = parseInt(s,10);
+  if (!Number.isFinite(days) || days <= 0) return;
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+  const where = `${FIELDS.end} < ${sqlTs(cutoff)}`;
+  try{
+    const ids = await layer.queryObjectIds({ where });
+    if (!ids || !ids.length){ toast("No records to archive."); return; }
+    const ok = confirm(`Delete ${ids.length} record(s) ended before ${cutoff.toDateString()}?`);
+    if (!ok) return;
+    const r = await layer.applyEdits({ deleteFeatures: ids.map(oid=>({ objectId: oid })) });
+    const failed = (r.deleteFeatureResults||[]).filter(x=>x.error);
+    if (failed.length) throw new Error(`${failed.length} failed`);
+    toast(`Archived ${ids.length} record(s).`);
+    _featureCount = await layer.queryFeatureCount({ where:"1=1" }); updateFooter();
+  }catch(e){ console.error(e); toast("Archive failed."); }
 }
 
-// boot
+// ------------------ Boot ------------------
 init();
