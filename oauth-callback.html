@@ -6,16 +6,21 @@
 </head>
 <body>
 <script>
-/* Minimal ArcGIS OAuth popup callback bridge */
+/* Bridge the OAuth response back to the opener's ArcGIS IdentityManager */
 (function () {
+  function closeSoon(){ setTimeout(function(){ window.close(); }, 10); }
   try {
-    // Pass the full URL (with ?code=... or error=...) back to the opener
-    if (window.opener && window.opener.postMessage) {
-      window.opener.postMessage(window.location.href, "*");
+    if (window.opener && window.opener.require) {
+      window.opener.require(["esri/identity/IdentityManager"], function (esriId) {
+        // Hand the full URL (with ?code=... or error=...) to IdentityManager
+        esriId._oAuthCallback(window.location.href, window);
+        closeSoon();
+      });
+    } else {
+      // Fallback: at least close if opener/require aren't available
+      closeSoon();
     }
-  } catch (e) { /* no-op */ }
-  // Close the popup shortly after
-  setTimeout(function () { window.close(); }, 100);
+  } catch (e) { closeSoon(); }
 })();
 </script>
 </body>
