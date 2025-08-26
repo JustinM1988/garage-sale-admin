@@ -16,8 +16,8 @@ import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/Iden
 // Put your ArcGIS OAuth App ID here to REQUIRE sign-in
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
-  PORTAL_URL:  "https://www.arcgis.com",
-  OAUTH_APPID: null,                     // <-- PASTE YOUR APP ID HERE
+  PORTAL_URL:  "https://cityofportland.maps.arcgis.com/",
+  OAUTH_APPID: "VfADq37Q7WauhFsg",                     // <-- PASTE YOUR APP ID HERE
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
 };
