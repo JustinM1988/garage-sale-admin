@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OAuth 2.0 Callback</title>
+</head>
+<body>
+<script>
+/* Minimal ArcGIS OAuth popup callback bridge */
+(function () {
+  try {
+    // Pass the full URL (with ?code=... or error=...) back to the opener
+    if (window.opener && window.opener.postMessage) {
+      window.opener.postMessage(window.location.href, "*");
+    }
+  } catch (e) { /* no-op */ }
+  // Close the popup shortly after
+  setTimeout(function () { window.close(); }, 100);
+})();
+</script>
+</body>
+</html>
