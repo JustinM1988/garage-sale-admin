@@ -1,6 +1,6 @@
-// v3.7 — Required sign-in (OAuth), Admin debug (password 123456) with CSV export,
-// quick filters, theme toggle, OSM fallback basemap, ghost pin in New mode,
-// guarded add (no add by map click unless New), reliable edit/Cancel UX.
+// v3.8 — OAuth sign-in (required if CONFIG.OAUTH_APPID), Admin debug, CSV export,
+// guarded add (no add by map click unless New), ghost pin, Sales & Guide modals,
+// quick filters + theme (if present), reliable Cancel UX.
 
 import esriConfig    from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map           from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -12,27 +12,26 @@ import Search        from "https://js.arcgis.com/4.29/@arcgis/core/widgets/Searc
 import OAuthInfo     from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAuthInfo.js";
 import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
-// ------------------ Config ------------------
-// IMPORTANT: To REQUIRE ArcGIS sign-in, set OAUTH_APPID to your app's ID from
-// ArcGIS Online (Content > New item > Application > OAuth 2.0). Add your GitHub
-// Pages URL as the Redirect URI: https://justinm1988.github.io/garage-sale-admin/
+/* ------------------ Config ------------------ */
+// Put your ArcGIS OAuth App ID here to REQUIRE sign-in
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL:  "https://www.arcgis.com",
-  OAUTH_APPID: null,        // ← set to your real appId to enable ArcGIS sign-in
+  OAUTH_APPID: null,                     // <-- PASTE YOUR APP ID HERE
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
 };
-// Require sign-in to add/update/delete
+
+// Require sign-in for edits (buttons disabled until signed in)
 const REQUIRE_SIGN_IN = true;
 
-// ArcGIS basemap key (optional). Leave null to use OSM (no key).
+// Optional ArcGIS API key for Esri basemaps; leave null to use OSM
 const ARCGIS_API_KEY = null;
 
-// layer field names
+// Layer field names
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
-// ------------------ Helpers ------------------
+/* ------------------ Tiny helpers ------------------ */
 const $ = (sel) => document.querySelector(sel);
 function toast(msg){
   const el = document.createElement("div");
@@ -42,6 +41,7 @@ function toast(msg){
   setTimeout(()=> el.remove(), 2200);
 }
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
+
 function toEpochMaybe(v){
   if (v == null || v === "") return null;
   if (typeof v === "number") return v;
@@ -74,6 +74,7 @@ function composeDescription(){
   return details ? `${time}: ${details}` : time;
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
+
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -89,7 +90,7 @@ function sqlTs(d){ // TIMESTAMP 'YYYY-MM-DD HH:MM:SS'
   return `TIMESTAMP '${s}'`;
 }
 
-// ------------------ Admin Debug (password-gated) ------------------
+/* ------------------ Admin Debug ------------------ */
 const ADMIN_PASSWORD = "123456";
 let dbg = null, debugEnabled=false, debugPaused=false, debugVerbose=false;
 
@@ -182,22 +183,24 @@ function updateFooter(){
   dbg?.footer(info);
 }
 
-// ------------------ App state ------------------
+/* ------------------ App state ------------------ */
 let map, view, layer, editLayer, ghostLayer, ghostGraphic, search;
 let selectedFeature=null, objectIdField="OBJECTID";
 let signedIn=false, inNewMode=false, _featureCount=0;
 
-// ------------------ Init ------------------
+/* ------------------ Init ------------------ */
 async function init(){
-  // Wire header controls
+  // Header controls (they’re optional—safe if HTML doesn’t have them)
   $("#btnAdmin")?.addEventListener("click", openAdmin);
   $("#btnTheme")?.addEventListener("click", cycleTheme);
   $("#selFilter")?.addEventListener("change", (e)=> applyQuickFilter(e.target.value));
+  $("#btnSales") ?.addEventListener("click", showSalesList);
+  $("#btnGuide") ?.addEventListener("click", showGuide);
 
-  log(`app v3.7 starting`);
+  log(`app v3.8 starting`);
   log(`UA: ${navigator.userAgent}`);
 
-  // Basemap
+  // Basemap (OSM fallback)
   if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); }
   else { map = new Map({ basemap:"osm" }); setBasemapBadge("osm"); log(`basemap: OSM (no key)`); }
 
@@ -229,11 +232,11 @@ async function init(){
   editLayer  = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
-  // Search widget + logs
+  // Search widget
   search = new Search({ view }); view.ui.add(search, "top-right");
   search.on("select-result", (e)=> log(`select-result: ${e.result?.name || "(no name)"}`));
 
-  // OAuth (enables Sign in/out & gating)
+  // OAuth (sign-in/out + gating)
   wireAuth();
 
   // Ghost pin while in New mode (throttled unless verbose)
@@ -253,7 +256,7 @@ async function init(){
     }
   });
 
-  // Guarded click: Select existing when not in New; only place when in New
+  // Guarded click: select existing unless in New; only place when in New
   view.on("click", async (ev)=>{
     if (!inNewMode){
       const ht = await view.hitTest(ev);
@@ -277,7 +280,7 @@ async function init(){
     .forEach(id=> $("#"+id)?.addEventListener("input", syncDesc));
   syncDesc();
 
-  // Wire buttons
+  // Buttons
   $("#btnSave")  ?.addEventListener("click", onSave);
   $("#btnNew")   ?.addEventListener("click", enterAddMode);
   $("#btnCancel")?.addEventListener("click", cancelEditing);
@@ -286,14 +289,14 @@ async function init(){
   setStatus("Click a sale to edit, or click New to add a sale.");
 }
 
-// ------------------ Auth wiring ------------------
+/* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  // Always show Sign in button so it's obvious (even if appId not set)
-  $("#btnSignIn").style.display = "inline-block";
-  $("#btnSignOut").style.display = "none";
+  // Always show Sign in button so it’s obvious (even if appId not set)
+  $("#btnSignIn")?.style && ($("#btnSignIn").style.display = "inline-block");
+  $("#btnSignOut")?.style && ($("#btnSignOut").style.display = "none");
 
   if (!CONFIG.OAUTH_APPID){
-    $("#btnSignIn").onclick = ()=> toast("Configure OAuth appId to enable ArcGIS sign-in.");
+    $("#btnSignIn")?.addEventListener("click", ()=> toast("Configure OAuth appId to enable ArcGIS sign-in."));
     disableEditingUI(true);
     return;
   }
@@ -306,20 +309,22 @@ function wireAuth(){
     signedIn = true; updateAuthUI();
   }).catch(()=>{ signedIn = false; updateAuthUI(); });
 
-  $("#btnSignIn").onclick = async ()=>{
+  $("#btnSignIn")?.addEventListener("click", async ()=>{
     try{
       await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`);
       signedIn = true; updateAuthUI(); toast("Signed in.");
     }catch(_){}
-  };
-  $("#btnSignOut").onclick = ()=>{
+  });
+  $("#btnSignOut")?.addEventListener("click", ()=>{
     esriId.destroyCredentials();
     signedIn=false; updateAuthUI(); toast("Signed out.");
-  };
+  });
 }
 function updateAuthUI(){
-  $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
-  $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
+  if ($("#btnSignIn") && $("#btnSignOut")){
+    $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
+    $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
+  }
   disableEditingUI(REQUIRE_SIGN_IN && !signedIn);
 }
 function disableEditingUI(disable){
@@ -330,7 +335,7 @@ function disableEditingUI(disable){
   });
 }
 
-// ------------------ Quick filter ------------------
+/* ------------------ Quick filter (optional UI) ------------------ */
 function applyQuickFilter(kind){
   const now = new Date();
   let start = null, end = null, label = "all";
@@ -338,7 +343,7 @@ function applyQuickFilter(kind){
     // next Saturday 00:00 to Sunday 23:59:59
     const d = new Date(now);
     const dow = d.getDay();
-    const add = (6 - dow + 7) % 7; // days to Saturday
+    const add = (6 - dow + 7) % 7;
     const sat = new Date(d.getFullYear(), d.getMonth(), d.getDate()+add, 0,0,0);
     const sun = new Date(sat.getFullYear(), sat.getMonth(), sat.getDate()+1, 23,59,59);
     start = sat; end = sun; label = "weekend";
@@ -351,7 +356,6 @@ function applyQuickFilter(kind){
   let where="1=1";
   if (label==="weekend" || label==="next14"){
     const ts1 = sqlTs(start), ts2 = sqlTs(end);
-    // show if it overlaps the window: start <= endWindow AND (end IS NULL OR end >= startWindow)
     where = `(${FIELDS.start} <= ${ts2}) AND (${FIELDS.end} IS NULL OR ${FIELDS.end} >= ${ts1})`;
   } else if (label==="past"){
     const ts = sqlTs(end);
@@ -362,7 +366,7 @@ function applyQuickFilter(kind){
   log(`filter applied: ${label}`);
 }
 
-// ------------------ Theme toggle ------------------
+/* ------------------ Theme toggle (optional UI) ------------------ */
 function cycleTheme(){
   const order = ["dark","dim","light"];
   const cur = document.documentElement.getAttribute("data-theme") || "dark";
@@ -372,7 +376,7 @@ function cycleTheme(){
   toast(`Theme: ${next}`);
 }
 
-// ------------------ Add / Edit flow ------------------
+/* ------------------ Add / Edit flow ------------------ */
 function enterAddMode(){
   if (REQUIRE_SIGN_IN && !signedIn) { toast("Sign in to add."); return; }
   inNewMode = true;
@@ -427,7 +431,7 @@ function parseTimeFromDescription(text){
   syncDesc();
 }
 
-// ------------------ Save / Delete ------------------
+/* ------------------ Save / Delete ------------------ */
 function attributesFromForm(){
   syncDesc();
   return {
@@ -483,7 +487,99 @@ async function onDelete(){
   }catch(e){ console.error(e); toast("Delete failed."); }
 }
 
-// ------------------ Admin Tools ------------------
+/* ------------------ Sales list + Guide ------------------ */
+async function showSalesList(){
+  try{
+    const q = await layer.queryFeatures({
+      where: layer.definitionExpression || "1=1",
+      outFields: ["*"],
+      orderByFields: [FIELDS.start + " DESC"],
+      returnGeometry: true,
+      num: 200
+    });
+    const rows = q.features.map(f=>{
+      const a=f.attributes;
+      const title=a[FIELDS.address]||"(no address)";
+      const sub=[fmtYMD(a[FIELDS.start]), fmtYMD(a[FIELDS.end])].filter(Boolean).join(" → ");
+      return { oid:a[layer.objectIdField], title, sub, feature:f };
+    });
+
+    const body = document.createElement("div");
+    body.className="list";
+    body.innerHTML = rows.length ? rows.map(r=>`
+      <div class="list-row" data-oid="${r.oid}">
+        <div class="meta">
+          <span class="title">${r.title.replace(/</g,"&lt;")}</span>
+          <span>${r.sub}</span>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn btn-secondary btn-edit" data-oid="${r.oid}">Edit</button>
+          <button type="button" class="btn btn-danger btn-del" data-oid="${r.oid}">Delete</button>
+        </div>
+      </div>`).join("") : "<p>No sales found.</p>";
+
+    const wrap = document.createElement("div");
+    wrap.className="modal-backdrop";
+    wrap.innerHTML = `<div class="modal glass">
+      <div class="modal-header">
+        <div class="modal-title">Garage Sales</div>
+        <button type="button" class="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn">Close</button>
+      </div>
+    </div>`;
+    wrap.querySelector(".modal-body").appendChild(body);
+    document.body.appendChild(wrap);
+
+    const closeModal = () => wrap.remove();
+    wrap.querySelector(".modal-close").addEventListener("click", closeModal);
+    wrap.querySelector(".modal-actions .btn").addEventListener("click", closeModal);
+    const esc = (e)=>{ if(e.key==="Escape"){ closeModal(); window.removeEventListener("keydown",esc);} };
+    window.addEventListener("keydown", esc);
+
+    body.querySelectorAll(".btn-edit").forEach(btn=>{
+      btn.addEventListener("click",(e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const oid = +btn.dataset.oid;
+        const f = rows.find(r=> r.oid===oid)?.feature;
+        closeModal();
+        if (f){ loadForEdit(f); view.goTo(f.geometry).catch(()=>{}); }
+      });
+    });
+
+    body.querySelectorAll(".btn-del").forEach(btn=>{
+      btn.addEventListener("click", async (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const oid = +btn.dataset.oid;
+        const f = rows.find(r=> r.oid===oid)?.feature;
+        closeModal();
+        if (f){ selectedFeature = f; await onDelete(); }
+      });
+    });
+  }catch(e){ console.error(e); toast("Couldn’t load list."); }
+}
+
+function showGuide(){
+  const wrap = document.createElement("div"); wrap.className="modal-backdrop";
+  wrap.innerHTML = `<div class="modal glass">
+    <div class="modal-header"><div class="modal-title">Quick Guide</div><button class="modal-close" aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <ol style="line-height:1.7;">
+        <li><strong>Add a sale:</strong> click <em>New</em>. A ghost pin follows your cursor — click to place. Fill the form, then <em>Save</em>. Use <em>Cancel</em> to exit.</li>
+        <li><strong>Edit a sale:</strong> click a point on the map or open <em>Sales</em> → <em>Edit</em>.</li>
+        <li><strong>Delete:</strong> select a sale, then <em>Delete</em>.</li>
+        <li><strong>Description:</strong> auto-composed from time + details; uncheck to type your own.</li>
+      </ol>
+    </div>
+    <div class="modal-actions"><button class="btn">Got it</button></div></div>`;
+  wrap.querySelector(".modal-close").onclick = ()=> wrap.remove();
+  wrap.querySelector(".btn").onclick = ()=> wrap.remove();
+  document.body.appendChild(wrap);
+}
+
+/* ------------------ Admin tools ------------------ */
 async function exportCSV(){
   try{
     const q = await layer.queryFeatures({
@@ -532,5 +628,5 @@ async function archiveDialog(){
   }catch(e){ console.error(e); toast("Archive failed."); }
 }
 
-// ------------------ Boot ------------------
+/* ------------------ Boot ------------------ */
 init();
