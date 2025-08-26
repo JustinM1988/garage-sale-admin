@@ -291,7 +291,6 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  // Force popup + use Esri-hosted callback to avoid 404s on GitHub Pages
   esriConfig.portalUrl = CONFIG.PORTAL_URL;
   esriId.useSignInPage = false;
 
@@ -307,17 +306,15 @@ function wireAuth(){
   }
 
   const info = new OAuthInfo({
-    appId: CONFIG.OAUTH_APPID,
+    appId: CONFIG.OAUTH_APPID,                  // your App ID (a.k.a. Client ID)
     portalUrl: CONFIG.PORTAL_URL,
     popup: true,
-    // IMPORTANT: hosted callback prevents GitHub Pages 404
-    popupCallbackUrl: "https://js.arcgis.com/4.29/esri/identity/oAuthCallback.html"
+    popupCallbackUrl: "https://js.arcgis.com/4.29/esri/identity/oauth-callback.html"
   });
   esriId.registerOAuthInfos([info]);
 
   const SHARING = `${CONFIG.PORTAL_URL}/sharing`;
 
-  // Auto-detect existing session
   esriId.checkSignInStatus(SHARING)
     .then(()=>{ signedIn = true;  updateAuthUI(); })
     .catch(()=>{ signedIn = false; updateAuthUI(); });
@@ -326,6 +323,7 @@ function wireAuth(){
     try { await esriId.getCredential(SHARING); signedIn = true;  updateAuthUI(); toast("Signed in."); }
     catch(_) {}
   });
+
   btnOut?.addEventListener("click", ()=>{
     esriId.destroyCredentials();
     signedIn = false;
