@@ -292,7 +292,7 @@ async function init(){
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
   esriConfig.portalUrl = CONFIG.PORTAL_URL;
-  esriId.useSignInPage = false;
+  esriId.useSignInPage = false; // use popup flow
 
   const btnIn  = document.querySelector("#btnSignIn");
   const btnOut = document.querySelector("#btnSignOut");
@@ -306,22 +306,23 @@ function wireAuth(){
   }
 
   const info = new OAuthInfo({
-    appId: CONFIG.OAUTH_APPID,                  // your App ID (a.k.a. Client ID)
+    appId:     CONFIG.OAUTH_APPID,
     portalUrl: CONFIG.PORTAL_URL,
-    popup: true,
-    popupCallbackUrl: "https://js.arcgis.com/4.29/esri/identity/oauth-callback.html"
+    popup:     true,
+    // point to the file you just added & whitelisted:
+    popupCallbackUrl: "https://justinm1988.github.io/garage-sale-admin/oauth-callback.html"
   });
   esriId.registerOAuthInfos([info]);
 
-  const SHARING = `${CONFIG.PORTAL_URL}/sharing`;
+  const SHARING = `${info.portalUrl}/sharing`;
 
   esriId.checkSignInStatus(SHARING)
     .then(()=>{ signedIn = true;  updateAuthUI(); })
     .catch(()=>{ signedIn = false; updateAuthUI(); });
 
   btnIn?.addEventListener("click", async ()=>{
-    try { await esriId.getCredential(SHARING); signedIn = true;  updateAuthUI(); toast("Signed in."); }
-    catch(_) {}
+    try { await esriId.getCredential(SHARING); signedIn = true; updateAuthUI(); toast("Signed in."); }
+    catch(_) {/* canceled */}
   });
 
   btnOut?.addEventListener("click", ()=>{
