@@ -291,13 +291,12 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  // Force popup-based OAuth (prevents the bottom banner)
+  // Force popup + use Esri-hosted callback to avoid 404s on GitHub Pages
   esriConfig.portalUrl = CONFIG.PORTAL_URL;
   esriId.useSignInPage = false;
 
-  // Show buttons
-  const btnIn  = $("#btnSignIn");
-  const btnOut = $("#btnSignOut");
+  const btnIn  = document.querySelector("#btnSignIn");
+  const btnOut = document.querySelector("#btnSignOut");
   if (btnIn)  btnIn.style.display  = "inline-block";
   if (btnOut) btnOut.style.display = "none";
 
@@ -308,25 +307,25 @@ function wireAuth(){
   }
 
   const info = new OAuthInfo({
-    appId:     CONFIG.OAUTH_APPID,
+    appId: CONFIG.OAUTH_APPID,
     portalUrl: CONFIG.PORTAL_URL,
-    popup:     true
+    popup: true,
+    // IMPORTANT: hosted callback prevents GitHub Pages 404
+    popupCallbackUrl: "https://js.arcgis.com/4.29/esri/identity/oAuthCallback.html"
   });
   esriId.registerOAuthInfos([info]);
 
-  const SHARING = `${info.portalUrl}/sharing`;
+  const SHARING = `${CONFIG.PORTAL_URL}/sharing`;
 
-  // Try existing session
+  // Auto-detect existing session
   esriId.checkSignInStatus(SHARING)
     .then(()=>{ signedIn = true;  updateAuthUI(); })
     .catch(()=>{ signedIn = false; updateAuthUI(); });
 
-  // Wire buttons
   btnIn?.addEventListener("click", async ()=>{
     try { await esriId.getCredential(SHARING); signedIn = true;  updateAuthUI(); toast("Signed in."); }
-    catch(_) {/* cancelled */}
+    catch(_) {}
   });
-
   btnOut?.addEventListener("click", ()=>{
     esriId.destroyCredentials();
     signedIn = false;
@@ -335,20 +334,6 @@ function wireAuth(){
   });
 }
 
-function updateAuthUI(){
-  if ($("#btnSignIn") && $("#btnSignOut")){
-    $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
-    $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
-  }
-  disableEditingUI(REQUIRE_SIGN_IN && !signedIn);
-}
-function disableEditingUI(disable){
-  ["btnNew","btnSave","btnDelete"].forEach(id=>{
-    const b=$("#"+id); if (!b) return;
-    b.disabled = !!disable;
-    b.title = disable ? "Sign in to edit" : "";
-  });
-}
 
 /* ------------------ Quick filter (optional UI) ------------------ */
 function applyQuickFilter(kind){
