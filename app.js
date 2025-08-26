@@ -1,4 +1,4 @@
-// v3.8 — OAuth sign-in (required if CONFIG.OAUTH_APPID), Admin debug, CSV export,
+// v3.8.1 — OAuth popup sign-in (if CONFIG.OAUTH_APPID set), Admin debug, CSV export,
 // guarded add (no add by map click unless New), ghost pin, Sales & Guide modals,
 // quick filters + theme (if present), reliable Cancel UX.
 
@@ -190,14 +190,14 @@ let signedIn=false, inNewMode=false, _featureCount=0;
 
 /* ------------------ Init ------------------ */
 async function init(){
-  // Header controls (they’re optional—safe if HTML doesn’t have them)
+  // Header controls (optional in HTML)
   $("#btnAdmin")?.addEventListener("click", openAdmin);
   $("#btnTheme")?.addEventListener("click", cycleTheme);
   $("#selFilter")?.addEventListener("change", (e)=> applyQuickFilter(e.target.value));
   $("#btnSales") ?.addEventListener("click", showSalesList);
   $("#btnGuide") ?.addEventListener("click", showGuide);
 
-  log(`app v3.8 starting`);
+  log(`app v3.8.1 starting`);
   log(`UA: ${navigator.userAgent}`);
 
   // Basemap (OSM fallback)
@@ -292,57 +292,49 @@ async function init(){
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
   // Force popup-based OAuth (prevents the bottom banner)
-  esriConfig.portalUrl = CONFIG.PORTAL_URL;   // NEW
-  esriId.useSignInPage = false;               // NEW  ← ensures popup, not inline
+  esriConfig.portalUrl = CONFIG.PORTAL_URL;
+  esriId.useSignInPage = false;
 
-  // Always show buttons so the user sees them
-  $("#btnSignIn")?.style && ($("#btnSignIn").style.display = "inline-block");
-  $("#btnSignOut")?.style && ($("#btnSignOut").style.display = "none");
+  // Show buttons
+  const btnIn  = $("#btnSignIn");
+  const btnOut = $("#btnSignOut");
+  if (btnIn)  btnIn.style.display  = "inline-block";
+  if (btnOut) btnOut.style.display = "none";
 
   if (!CONFIG.OAUTH_APPID){
-    $("#btnSignIn")?.addEventListener("click", ()=> toast("Configure OAuth appId to enable ArcGIS sign-in."));
+    btnIn?.addEventListener("click", ()=> toast("Configure OAuth appId to enable ArcGIS sign-in."));
     disableEditingUI(true);
     return;
   }
 
   const info = new OAuthInfo({
-    appId: CONFIG.OAUTH_APPID,
+    appId:     CONFIG.OAUTH_APPID,
     portalUrl: CONFIG.PORTAL_URL,
-    popup: true     // keep popup=true
+    popup:     true
   });
   esriId.registerOAuthInfos([info]);
 
   const SHARING = `${info.portalUrl}/sharing`;
 
+  // Try existing session
   esriId.checkSignInStatus(SHARING)
-    .then(()=>{ signedIn = true; updateAuthUI(); })
+    .then(()=>{ signedIn = true;  updateAuthUI(); })
     .catch(()=>{ signedIn = false; updateAuthUI(); });
 
-  $("#btnSignIn")?.addEventListener("click", async ()=>{
-    try { await esriId.getCredential(SHARING); signedIn = true; updateAuthUI(); toast("Signed in."); }
-    catch(_) {}
+  // Wire buttons
+  btnIn?.addEventListener("click", async ()=>{
+    try { await esriId.getCredential(SHARING); signedIn = true;  updateAuthUI(); toast("Signed in."); }
+    catch(_) {/* cancelled */}
   });
-  $("#btnSignOut")?.addEventListener("click", ()=>{
-    esriId.destroyCredentials(); signedIn=false; updateAuthUI(); toast("Signed out.");
-  });
-}
 
-  // Try to auto-detect session
-  esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`).then(()=>{
-    signedIn = true; updateAuthUI();
-  }).catch(()=>{ signedIn = false; updateAuthUI(); });
-
-  $("#btnSignIn")?.addEventListener("click", async ()=>{
-    try{
-      await esriId.getCredential(`${CONFIG.PORTAL_URL}/sharing`);
-      signedIn = true; updateAuthUI(); toast("Signed in.");
-    }catch(_){}
-  });
-  $("#btnSignOut")?.addEventListener("click", ()=>{
+  btnOut?.addEventListener("click", ()=>{
     esriId.destroyCredentials();
-    signedIn=false; updateAuthUI(); toast("Signed out.");
+    signedIn = false;
+    updateAuthUI();
+    toast("Signed out.");
   });
 }
+
 function updateAuthUI(){
   if ($("#btnSignIn") && $("#btnSignOut")){
     $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
@@ -589,7 +581,7 @@ function showGuide(){
   wrap.innerHTML = `<div class="modal glass">
     <div class="modal-header"><div class="modal-title">Quick Guide</div><button class="modal-close" aria-label="Close">×</button></div>
     <div class="modal-body">
-      <ol style="line-height:1.7;">
+      <ol style="line-height:1.7%;">
         <li><strong>Add a sale:</strong> click <em>New</em>. A ghost pin follows your cursor — click to place. Fill the form, then <em>Save</em>. Use <em>Cancel</em> to exit.</li>
         <li><strong>Edit a sale:</strong> click a point on the map or open <em>Sales</em> → <em>Edit</em>.</li>
         <li><strong>Delete:</strong> select a sale, then <em>Delete</em>.</li>
