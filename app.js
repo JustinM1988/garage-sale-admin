@@ -291,7 +291,11 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  // Always show Sign in button so it’s obvious (even if appId not set)
+  // Force popup-based OAuth (prevents the bottom banner)
+  esriConfig.portalUrl = CONFIG.PORTAL_URL;   // NEW
+  esriId.useSignInPage = false;               // NEW  ← ensures popup, not inline
+
+  // Always show buttons so the user sees them
   $("#btnSignIn")?.style && ($("#btnSignIn").style.display = "inline-block");
   $("#btnSignOut")?.style && ($("#btnSignOut").style.display = "none");
 
@@ -301,8 +305,27 @@ function wireAuth(){
     return;
   }
 
-  const info = new OAuthInfo({ appId: CONFIG.OAUTH_APPID, portalUrl: CONFIG.PORTAL_URL, popup:true });
+  const info = new OAuthInfo({
+    appId: CONFIG.OAUTH_APPID,
+    portalUrl: CONFIG.PORTAL_URL,
+    popup: true     // keep popup=true
+  });
   esriId.registerOAuthInfos([info]);
+
+  const SHARING = `${info.portalUrl}/sharing`;
+
+  esriId.checkSignInStatus(SHARING)
+    .then(()=>{ signedIn = true; updateAuthUI(); })
+    .catch(()=>{ signedIn = false; updateAuthUI(); });
+
+  $("#btnSignIn")?.addEventListener("click", async ()=>{
+    try { await esriId.getCredential(SHARING); signedIn = true; updateAuthUI(); toast("Signed in."); }
+    catch(_) {}
+  });
+  $("#btnSignOut")?.addEventListener("click", ()=>{
+    esriId.destroyCredentials(); signedIn=false; updateAuthUI(); toast("Signed out.");
+  });
+}
 
   // Try to auto-detect session
   esriId.checkSignInStatus(`${CONFIG.PORTAL_URL}/sharing`).then(()=>{
