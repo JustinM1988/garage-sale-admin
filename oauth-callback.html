@@ -3,28 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <title>OAuth 2.0 Callback</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
 <script type="module">
   import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
-  // Hand the full URL (?code=... or ?error=...) to IdentityManager.
-  try {
-    esriId._oAuthCallback(window.location.href, window);
-  } catch (err) {
-    // (optional) last-resort fallback for AMD apps
-    try {
-      if (window.opener && window.opener.require) {
-        window.opener.require(["esri/identity/IdentityManager"], (idm) => {
-          idm._oAuthCallback(window.location.href, window);
-        });
-      }
-    } catch (_){}
-  } finally {
-    // Close after a tick so opener can finish processing.
-    setTimeout(() => window.close(), 20);
-  }
+  // Complete the OAuth flow for ES modules, then close the window.
+  esriId.completeOAuth2(window.location.href)
+    .catch(err => {
+      // Best-effort signal back to the opener for debugging
+      try { window.opener && window.opener.postMessage({type:"oauth-error", message:String(err)}, "*"); } catch(_){}
+    })
+    .finally(() => window.close());
 </script>
 </body>
 </html>
