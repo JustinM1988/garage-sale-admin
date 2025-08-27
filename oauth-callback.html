@@ -1,36 +1,40 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>OAuth 2.0 Callback</title>
-</head>
-<body>
-<script>
-/* Pass the OAuth response back to the opener's ArcGIS IdentityManager (ESM safe) */
-(function () {
-  function closeSoon(){ setTimeout(function(){ try{ window.close(); }catch(_){} }, 10); }
+  <head>
+    <meta charset="utf-8" />
+    <title>OAuth 2.0 Callback</title>
+  </head>
+  <body>
+    <!-- Load the ArcGIS JS AMD loader *in the popup* -->
+    <script src="https://js.arcgis.com/4.29/"></script>
+    <script>
+      (function () {
+        function closeSoon(){ setTimeout(function(){ try{ window.close(); }catch(_){} }, 60); }
 
-  try {
-    if (window.opener) {
-      // Preferred path for ESM apps: esriId was exposed on window by the opener
-      if (window.opener.esriId && window.opener.esriId._oAuthCallback) {
-        window.opener.esriId._oAuthCallback(window.location.href, window);
-        return closeSoon();
-      }
-      // Fallback if opener used AMD/RequireJS
-      if (window.opener.require) {
-        window.opener.require(["esri/identity/IdentityManager"], function(esriId) {
-          esriId._oAuthCallback(window.location.href, window);
-          closeSoon();
-        });
-        return;
-      }
-    }
-  } catch (e) {
-    // ignore and just try to close
-  }
-  closeSoon();
-})();
-</script>
-</body>
+        // Primary path: use AMD IdentityManager in the popup
+        if (window.require) {
+          window.require(["esri/identity/IdentityManager"], function (esriId) {
+            try { esriId._oAuthCallback(window.location.href, window); } catch (e) {}
+            closeSoon();
+          });
+          return;
+        }
+
+        // Fallbacks: try opener hooks (covers future/alt builds)
+        try {
+          var hooks = ["__esri_oauth_callback__", "__esri_rest_oauth_callback__"];
+          for (var i=0;i<hooks.length;i++){
+            var h = hooks[i];
+            if (window.opener && typeof window.opener[h] === "function") {
+              window.opener[h](window.location.href, window);
+              return closeSoon();
+            }
+          }
+        } catch(_) {}
+
+        // Last resort: just close
+        closeSoon();
+      })();
+    </script>
+  </body>
 </html>
