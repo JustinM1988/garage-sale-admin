@@ -1,40 +1,49 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>OAuth 2.0 Callback</title>
-  </head>
-  <body>
-    <!-- Load the ArcGIS JS AMD loader *in the popup* -->
-    <script src="https://js.arcgis.com/4.29/"></script>
-    <script>
-      (function () {
-        function closeSoon(){ setTimeout(function(){ try{ window.close(); }catch(_){} }, 60); }
+<head>
+  <meta charset="utf-8" />
+  <title>OAuth Callback</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px}
+    .card{max-width:520px;margin:auto;border:1px solid #ddd;border-radius:8px;padding:16px}
+    .muted{color:#666;font-size:14px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>Completing sign-in…</h3>
+    <p class="muted">You can close this window.</p>
+  </div>
 
-        // Primary path: use AMD IdentityManager in the popup
-        if (window.require) {
-          window.require(["esri/identity/IdentityManager"], function (esriId) {
-            try { esriId._oAuthCallback(window.location.href, window); } catch (e) {}
-            closeSoon();
-          });
-          return;
+  <script>
+    (function(){
+      try{
+        // 1) If opener has AMD IdentityManager, finish there
+        if (window.opener && window.opener.require) {
+          try {
+            window.opener.require(["esri/kernel"], function(kernel){
+              if (kernel && kernel.id && typeof kernel.id.setOAuthResponseHash === "function") {
+                // Handle both implicit (hash) and PKCE (query) forms
+                if (location.hash)  kernel.id.setOAuthResponseHash(location.hash);
+                if (location.search) kernel.id.setOAuthResponseHash(location.search);
+              }
+            });
+          } catch(_) { /* ignore */ }
         }
 
-        // Fallbacks: try opener hooks (covers future/alt builds)
-        try {
-          var hooks = ["__esri_oauth_callback__", "__esri_rest_oauth_callback__"];
-          for (var i=0;i<hooks.length;i++){
-            var h = hooks[i];
-            if (window.opener && typeof window.opener[h] === "function") {
-              window.opener[h](window.location.href, window);
-              return closeSoon();
-            }
-          }
-        } catch(_) {}
-
-        // Last resort: just close
-        closeSoon();
-      })();
-    </script>
-  </body>
+        // 2) Always send an ESM-friendly event too (our app listens for these)
+        if (window.opener && typeof window.opener.dispatchEvent === "function") {
+          if (location.hash)   window.opener.dispatchEvent(new CustomEvent("arcgis:auth:hash",   { detail: location.hash }));
+          if (location.search) window.opener.dispatchEvent(new CustomEvent("arcgis:auth:search", { detail: location.search }));
+        }
+      } catch(e){
+        // last resort: nothing we can do
+      } finally {
+        // Close in a tick to allow messages to dispatch
+        setTimeout(()=> window.close(), 20);
+      }
+    })();
+  </script>
+</body>
 </html>
