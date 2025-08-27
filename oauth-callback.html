@@ -5,46 +5,29 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ArcGIS OAuth Callback</title>
   <style>
-    body { font: 14px system-ui, sans-serif; padding: 24px; color: #e6e6e6; background:#111; }
+    body { font: 14px system-ui, sans-serif; padding: 24px; color:#e6e6e6; background:#111; }
     .ok { color:#9be49b; }
-    .warn { color:#ffe38a; }
+    .err { color:#ff9b9b; }
   </style>
 </head>
 <body>
   <div id="msg">Completing sign-in…</div>
-<script>
-(function () {
-  const payload = window.location.hash || window.location.search || "";
-  const isHash = payload.startsWith("#");
-  const isQuery = payload.startsWith("?");
 
-  const send = (type, data) => {
-    try {
-      // Primary: custom event (what your app.js already listens for)
-      if (window.opener && !window.opener.closed) {
-        const evtName = type === "hash" ? "arcgis:auth:hash" : "arcgis:auth:search";
-        window.opener.dispatchEvent(new CustomEvent(evtName, { detail: data }));
-      }
-      // Secondary: postMessage fallback (added listener in app.js below)
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: "arcgis:auth", payload: data }, window.location.origin);
-      }
-    } catch (err) {
-      console.error("Callback bridge error:", err);
-    }
-  };
+  <script type="module">
+    import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
-  if (isHash || isQuery) {
-    send(isHash ? "hash" : "query", payload);
-    document.getElementById("msg").innerHTML =
-      "<span class='ok'>Authentication complete.</span> You can close this window.";
-    // Give the opener a moment to process, then close
-    setTimeout(() => { try { window.close(); } catch (_) {} }, 250);
-  } else {
-    document.getElementById("msg").innerHTML =
-      "<span class='warn'>No OAuth response found.</span> You can close this window.";
-  }
-})();
-</script>
+    esriId.completeOAuth2()
+      .then(() => {
+        document.getElementById("msg").innerHTML =
+          "<span class='ok'>Authentication complete.</span> You can close this window.";
+        // Give opener a tick to attach the credential, then close
+        setTimeout(() => { try { window.close(); } catch(_) {} }, 250);
+      })
+      .catch((err) => {
+        console.error(err);
+        document.getElementById("msg").innerHTML =
+          "<span class='err'>Authentication failed.</span> You can close this window.";
+      });
+  </script>
 </body>
 </html>
