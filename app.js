@@ -371,6 +371,17 @@ function wireAuth(){
   });
 }
 
+// Fallback/fast path: accept the OAuth payload from the callback popup
+window.addEventListener("message", (e) => {
+  try {
+    if (e.origin !== window.location.origin) return;   // same-origin guard
+    if (!e.data || e.data.type !== "arcgis:auth") return;
+    log("[oauth] received OAuth payload via postMessage");
+    esriId.setOAuthResponseHash(e.data.payload);       // <-- hands code/token to IdentityManager
+  } catch (err) {
+    log(`[oauth] postMessage handler error: ${err?.message||err}`, "err");
+  }
+});
 
 
 /* ------------------ Quick filter (optional UI) ------------------ */
