@@ -5,16 +5,32 @@
   <title>OAuth 2.0 Callback</title>
 </head>
 <body>
-<script type="module">
-  import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
+<script>
+/* Pass the OAuth response back to the opener's ArcGIS IdentityManager (ESM safe) */
+(function () {
+  function closeSoon(){ setTimeout(function(){ try{ window.close(); }catch(_){} }, 10); }
 
-  // Complete the OAuth flow for ES modules, then close the window.
-  esriId.completeOAuth2(window.location.href)
-    .catch(err => {
-      // Best-effort signal back to the opener for debugging
-      try { window.opener && window.opener.postMessage({type:"oauth-error", message:String(err)}, "*"); } catch(_){}
-    })
-    .finally(() => window.close());
+  try {
+    if (window.opener) {
+      // Preferred path for ESM apps: esriId was exposed on window by the opener
+      if (window.opener.esriId && window.opener.esriId._oAuthCallback) {
+        window.opener.esriId._oAuthCallback(window.location.href, window);
+        return closeSoon();
+      }
+      // Fallback if opener used AMD/RequireJS
+      if (window.opener.require) {
+        window.opener.require(["esri/identity/IdentityManager"], function(esriId) {
+          esriId._oAuthCallback(window.location.href, window);
+          closeSoon();
+        });
+        return;
+      }
+    }
+  } catch (e) {
+    // ignore and just try to close
+  }
+  closeSoon();
+})();
 </script>
 </body>
 </html>
