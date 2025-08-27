@@ -1,5 +1,6 @@
-// v3.8.2 — OAuth popup sign-in (ESM callback), Admin debug (auth inspector), CSV export,
-// guarded add, ghost pin, Sales & Guide modals, quick filters + theme, reliable Cancel UX.
+// v3.8.3 — OAuth popup sign-in (ESM callback), Admin debug (auth inspector, larger panel),
+// CSV export, guarded add, ghost pin, Sales & Guide modals, quick filters + theme,
+// reliable Cancel UX.
 
 import esriConfig    from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map           from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -12,20 +13,17 @@ import OAuthInfo     from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAut
 import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 /* ------------------ Config ------------------ */
-// IMPORTANT: Leave PORTAL_URL without a trailing slash
+// IMPORTANT: PORTAL_URL must NOT end with a trailing slash
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL:  "https://cityofportland.maps.arcgis.com",
-  OAUTH_APPID: "VfADq37Q7WauhFsg",
+  OAUTH_APPID: "VfADq37Q7WauhFsg",        // your App ID
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
 };
 
-// Require sign-in for edits (buttons disabled until signed in)
-const REQUIRE_SIGN_IN = true;
-
-// Optional ArcGIS API key for Esri basemaps; leave null to use OSM
-const ARCGIS_API_KEY = null;
+const REQUIRE_SIGN_IN = true;     // disable edit buttons until signed-in
+const ARCGIS_API_KEY = null;      // Esri basemaps if you want; otherwise OSM
 
 // Layer field names
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
@@ -83,7 +81,8 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
-function sqlTs(d){ const pad=(n)=> String(n).padStart(2,"0");
+function sqlTs(d){
+  const pad=(n)=> String(n).padStart(2,"0");
   const s = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   return `TIMESTAMP '${s}'`;
 }
@@ -97,6 +96,9 @@ function ensureDebugPanel(){
   const wrap = document.createElement("div");
   wrap.className = "debug-panel glass";
   wrap.style.display = "none";
+  // make it bigger by default
+  wrap.style.width = "520px";
+  wrap.style.maxHeight = "70vh";
   wrap.innerHTML = `
     <div class="debug-header">
       <div class="debug-title">Admin Debug</div>
@@ -118,12 +120,14 @@ function ensureDebugPanel(){
   `;
   document.body.appendChild(wrap);
 
+  // Drag by header
   const header = wrap.querySelector(".debug-header");
   let drag=false, sx=0, sy=0, ox=0, oy=0;
   header.addEventListener("mousedown",(e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
   window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
   window.addEventListener("mouseup",()=> drag=false);
 
+  // Controls
   wrap.querySelector("#dbgPause").onclick = ()=>{ debugPaused=!debugPaused; wrap.querySelector("#dbgPause").textContent = debugPaused?"Resume":"Pause"; log(`[debug] ${debugPaused?"paused":"resumed"}`); };
   wrap.querySelector("#dbgVerbose").onclick = ()=>{ debugVerbose=!debugVerbose; wrap.querySelector("#dbgVerbose").textContent=`Verbose: ${debugVerbose?"On":"Off"}`; log(`[debug] verbose ${debugVerbose?"enabled":"disabled"}`); };
   wrap.querySelector("#dbgClear").onclick = ()=>{ wrap.querySelector("#dbgBody").innerHTML=""; };
@@ -137,7 +141,7 @@ function ensureDebugPanel(){
   wrap.querySelector("#dbgExport").onclick = exportCSV;
   wrap.querySelector("#dbgArchive").onclick = archiveDialog;
 
-  // --- NEW: Auth inspector button
+  // --- Auth inspector button
   wrap.querySelector("#dbgAuth").onclick = ()=>{
     const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
     const sharing = `${portal}/sharing`;
@@ -150,8 +154,8 @@ function ensureDebugPanel(){
       const c = esriId.findCredential(sharing);
       if (c){
         const mins = Math.max(0, Math.round((c.expires - Date.now())/60000));
-        log(`[auth] userId: ${c.userId || "(unknown)"}`);
-        log(`[auth] expires in: ${mins} min; server: ${c.server}`);
+        log(`[auth] userId: ${c.userId || "(unknown)"}; server: ${c.server}`);
+        log(`[auth] expires in: ${mins} min`);
       } else {
         log("[auth] no credential for /sharing");
       }
@@ -214,7 +218,7 @@ async function init(){
   $("#btnSales") ?.addEventListener("click", showSalesList);
   $("#btnGuide") ?.addEventListener("click", showGuide);
 
-  log(`app v3.8.2 starting`);
+  log(`app v3.8.3 starting`);
   log(`UA: ${navigator.userAgent}`);
 
   // Basemap (OSM fallback)
@@ -308,11 +312,15 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");          // sanitize (no trailing slash)
+  const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");             // sanitize (no trailing slash)
   const CALLBACK_URL = new URL("oauth-callback.html", window.location.href).href;
 
   esriConfig.portalUrl = PORTAL;
-  esriId.useSignInPage = false; // use popup
+  esriId.useSignInPage = false; // popup flow
+
+  // expose IdentityManager for the popup callback (ESM-safe)
+  // NOTE: safe to expose; it only contains in-memory credentials
+  window.esriId = esriId;
 
   const btnIn  = $("#btnSignIn");
   const btnOut = $("#btnSignOut");
@@ -343,13 +351,13 @@ function wireAuth(){
     .then(()=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
     .catch(()=>{ signedIn = false; log("[oauth] no existing session"); updateAuthUI(); });
 
-  // Wire buttons
+  // Buttons
   btnIn?.addEventListener("click", async ()=>{
     try {
       log("[oauth] Sign In clicked — requesting credential…");
       const cred = await esriId.getCredential(SHARING);
       signedIn = true;
-      log(`[oauth] credential acquired for ${cred.server}; userId: ${cred.userId || "(unknown)"}; expires: ${new Date(cred.expires).toLocaleString()}`);
+      log(`[oauth] credential OK; userId=${cred.userId || "(unknown)"}; server=${cred.server}; exp=${new Date(cred.expires).toLocaleString()}`);
       updateAuthUI(); toast("Signed in.");
     } catch(e){
       log(`[oauth] sign-in canceled or failed: ${e?.message||e}`, "warn");
