@@ -416,6 +416,20 @@ function disableEditingUI(disable){
   });
 }
 
+// Add once in wireAuth(), after registering OAuthInfo …
+window.addEventListener("message", (e) => {
+  try {
+    if (e.origin !== window.location.origin) return; // same-origin guard
+    if (!e.data || e.data.type !== "arcgis:auth") return;
+    log("[oauth] received postMessage fallback from callback");
+    esriId.setOAuthResponseHash(e.data.payload);
+  } catch (err) {
+    log(`[oauth] postMessage handler error: ${err?.message||err}`, "err");
+  }
+});
+
+
+
 /* ------------------ Quick filter (optional UI) ------------------ */
 function applyQuickFilter(kind){
   const now = new Date();
