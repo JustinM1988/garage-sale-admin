@@ -1,21 +1,30 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>OAuth 2.0 Callback</title></head>
+<head>
+  <meta charset="utf-8" />
+  <title>OAuth 2.0 Callback</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
 <body>
-<script>
-/* ESM-safe callback: send full URL back to opener, then close */
-(function () {
+<script type="module">
+  import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
+
+  // Hand the full URL (?code=... or ?error=...) to IdentityManager.
   try {
-    if (window.opener) {
-      window.opener.postMessage(
-        { type: "arcgis:oauth-callback", url: window.location.href },
-        "*"
-      );
-    }
+    esriId._oAuthCallback(window.location.href, window);
+  } catch (err) {
+    // (optional) last-resort fallback for AMD apps
+    try {
+      if (window.opener && window.opener.require) {
+        window.opener.require(["esri/identity/IdentityManager"], (idm) => {
+          idm._oAuthCallback(window.location.href, window);
+        });
+      }
+    } catch (_){}
   } finally {
-    setTimeout(function(){ window.close(); }, 50);
+    // Close after a tick so opener can finish processing.
+    setTimeout(() => window.close(), 20);
   }
-})();
 </script>
 </body>
 </html>
