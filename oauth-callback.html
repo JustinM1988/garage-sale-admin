@@ -2,48 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>OAuth Callback</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px}
-    .card{max-width:520px;margin:auto;border:1px solid #ddd;border-radius:8px;padding:16px}
-    .muted{color:#666;font-size:14px}
-  </style>
+  <title>OAuth Callback</title>
 </head>
 <body>
-  <div class="card">
-    <h3>Completing sign-in…</h3>
-    <p class="muted">You can close this window.</p>
-  </div>
+<script type="module">
+  import esriId from "https://js.arcgis.com/4.30/esri/identity/IdentityManager.js";
 
-  <script>
-    (function(){
-      try{
-        // 1) If opener has AMD IdentityManager, finish there
-        if (window.opener && window.opener.require) {
-          try {
-            window.opener.require(["esri/kernel"], function(kernel){
-              if (kernel && kernel.id && typeof kernel.id.setOAuthResponseHash === "function") {
-                // Handle both implicit (hash) and PKCE (query) forms
-                if (location.hash)  kernel.id.setOAuthResponseHash(location.hash);
-                if (location.search) kernel.id.setOAuthResponseHash(location.search);
-              }
-            });
-          } catch(_) { /* ignore */ }
-        }
-
-        // 2) Always send an ESM-friendly event too (our app listens for these)
-        if (window.opener && typeof window.opener.dispatchEvent === "function") {
-          if (location.hash)   window.opener.dispatchEvent(new CustomEvent("arcgis:auth:hash",   { detail: location.hash }));
-          if (location.search) window.opener.dispatchEvent(new CustomEvent("arcgis:auth:search", { detail: location.search }));
-        }
-      } catch(e){
-        // last resort: nothing we can do
-      } finally {
-        // Close in a tick to allow messages to dispatch
-        setTimeout(()=> window.close(), 20);
-      }
-    })();
-  </script>
+  // Completes the PKCE code exchange and hands the credential
+  // back to the opener/origin page.
+  esriId
+    .completeOAuth2()
+    .then(() => {
+      // Optional: give a tiny visual hint if user opens this tab
+      document.body.textContent = "Authentication complete. You may close this tab.";
+    })
+    .catch((err) => {
+      console.error("OAuth complete error:", err);
+      document.body.textContent = "Authentication failed. You may close this tab.";
+    });
+</script>
 </body>
 </html>
