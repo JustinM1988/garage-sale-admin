@@ -1,6 +1,5 @@
-// v3.8.1 — OAuth popup sign-in (if CONFIG.OAUTH_APPID set), Admin debug, CSV export,
-// guarded add (no add by map click unless New), ghost pin, Sales & Guide modals,
-// quick filters + theme (if present), reliable Cancel UX.
+// v3.8.2 — OAuth popup sign-in (ESM callback), Admin debug (auth inspector), CSV export,
+// guarded add, ghost pin, Sales & Guide modals, quick filters + theme, reliable Cancel UX.
 
 import esriConfig    from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map           from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -13,11 +12,11 @@ import OAuthInfo     from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAut
 import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 /* ------------------ Config ------------------ */
-// Put your ArcGIS OAuth App ID here to REQUIRE sign-in
+// IMPORTANT: Leave PORTAL_URL without a trailing slash
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL:  "https://cityofportland.maps.arcgis.com",
-  OAUTH_APPID: "VfADq37Q7WauhFsg",                     // <-- PASTE YOUR APP ID HERE
+  OAUTH_APPID: "VfADq37Q7WauhFsg",
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
 };
@@ -84,8 +83,7 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
-function sqlTs(d){ // TIMESTAMP 'YYYY-MM-DD HH:MM:SS'
-  const pad=(n)=> String(n).padStart(2,"0");
+function sqlTs(d){ const pad=(n)=> String(n).padStart(2,"0");
   const s = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   return `TIMESTAMP '${s}'`;
 }
@@ -107,6 +105,7 @@ function ensureDebugPanel(){
         <span id="dbgFilter" class="debug-badge">filter: all</span>
         <button id="dbgPause" class="debug-btn">Pause</button>
         <button id="dbgVerbose" class="debug-btn">Verbose: Off</button>
+        <button id="dbgAuth" class="debug-btn">Auth?</button>
         <button id="dbgExport" class="debug-btn">Export CSV</button>
         <button id="dbgArchive" class="debug-btn" title="Delete older than…">Archive…</button>
         <button id="dbgClear" class="debug-btn">Clear</button>
@@ -119,14 +118,12 @@ function ensureDebugPanel(){
   `;
   document.body.appendChild(wrap);
 
-  // Drag by header
   const header = wrap.querySelector(".debug-header");
   let drag=false, sx=0, sy=0, ox=0, oy=0;
   header.addEventListener("mousedown",(e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
   window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
   window.addEventListener("mouseup",()=> drag=false);
 
-  // Controls
   wrap.querySelector("#dbgPause").onclick = ()=>{ debugPaused=!debugPaused; wrap.querySelector("#dbgPause").textContent = debugPaused?"Resume":"Pause"; log(`[debug] ${debugPaused?"paused":"resumed"}`); };
   wrap.querySelector("#dbgVerbose").onclick = ()=>{ debugVerbose=!debugVerbose; wrap.querySelector("#dbgVerbose").textContent=`Verbose: ${debugVerbose?"On":"Off"}`; log(`[debug] verbose ${debugVerbose?"enabled":"disabled"}`); };
   wrap.querySelector("#dbgClear").onclick = ()=>{ wrap.querySelector("#dbgBody").innerHTML=""; };
@@ -139,6 +136,27 @@ function ensureDebugPanel(){
   // Admin tools
   wrap.querySelector("#dbgExport").onclick = exportCSV;
   wrap.querySelector("#dbgArchive").onclick = archiveDialog;
+
+  // --- NEW: Auth inspector button
+  wrap.querySelector("#dbgAuth").onclick = ()=>{
+    const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
+    const sharing = `${portal}/sharing`;
+    log(`[auth] portal: ${portal}`);
+    log(`[auth] appId: ${CONFIG.OAUTH_APPID || "(none)"}`);
+    log(`[auth] signedIn flag: ${signedIn}`);
+    try{
+      const creds = esriId.credentials || [];
+      log(`[auth] credentials: ${creds.length}`);
+      const c = esriId.findCredential(sharing);
+      if (c){
+        const mins = Math.max(0, Math.round((c.expires - Date.now())/60000));
+        log(`[auth] userId: ${c.userId || "(unknown)"}`);
+        log(`[auth] expires in: ${mins} min; server: ${c.server}`);
+      } else {
+        log("[auth] no credential for /sharing");
+      }
+    }catch(e){ log(`[auth] inspector error: ${e?.message||e}`, "err"); }
+  };
 
   // Error pipes
   window.addEventListener("error",(e)=> log(`JS Error: ${e.message}`, "err"));
@@ -190,14 +208,13 @@ let signedIn=false, inNewMode=false, _featureCount=0;
 
 /* ------------------ Init ------------------ */
 async function init(){
-  // Header controls (optional in HTML)
   $("#btnAdmin")?.addEventListener("click", openAdmin);
   $("#btnTheme")?.addEventListener("click", cycleTheme);
   $("#selFilter")?.addEventListener("change", (e)=> applyQuickFilter(e.target.value));
   $("#btnSales") ?.addEventListener("click", showSalesList);
   $("#btnGuide") ?.addEventListener("click", showGuide);
 
-  log(`app v3.8.1 starting`);
+  log(`app v3.8.2 starting`);
   log(`UA: ${navigator.userAgent}`);
 
   // Basemap (OSM fallback)
@@ -256,7 +273,7 @@ async function init(){
     }
   });
 
-  // Guarded click: select existing unless in New; only place when in New
+  // Guarded click
   view.on("click", async (ev)=>{
     if (!inNewMode){
       const ht = await view.hitTest(ev);
@@ -291,13 +308,14 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  // normalize portal URL (no trailing slash) and force popup
-  const portal = String(CONFIG.PORTAL_URL).replace(/\/+$/,'');
-  esriConfig.portalUrl = portal;
-  esriId.useSignInPage = false;
+  const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");          // sanitize (no trailing slash)
+  const CALLBACK_URL = new URL("oauth-callback.html", window.location.href).href;
 
-  const btnIn  = document.querySelector("#btnSignIn");
-  const btnOut = document.querySelector("#btnSignOut");
+  esriConfig.portalUrl = PORTAL;
+  esriId.useSignInPage = false; // use popup
+
+  const btnIn  = $("#btnSignIn");
+  const btnOut = $("#btnSignOut");
   if (btnIn)  btnIn.style.display  = "inline-block";
   if (btnOut) btnOut.style.display = "none";
 
@@ -307,47 +325,40 @@ function wireAuth(){
     return;
   }
 
-  // ESM-safe popup + callback
+  log(`[oauth] portal: ${PORTAL}`);
+  log(`[oauth] callback: ${CALLBACK_URL}`);
+
   const info = new OAuthInfo({
-    appId:            CONFIG.OAUTH_APPID,
-    portalUrl:        portal,
-    popup:            true,
-    popupCallbackUrl: "https://justinm1988.github.io/garage-sale-admin/oauth-callback.html"
+    appId:     CONFIG.OAUTH_APPID,
+    portalUrl: PORTAL,
+    popup:     true,
+    popupCallbackUrl: CALLBACK_URL
   });
   esriId.registerOAuthInfos([info]);
 
-  const SHARING = `${portal}/sharing`;
-
-  // Bridge for ESM: receive the URL from the popup and pass to IdentityManager
-  window.addEventListener("message", (evt)=>{
-    if (evt?.data?.type === "arcgis:oauth-callback" && evt?.data?.url){
-      try {
-        esriId._oAuthCallback(evt.data.url, evt.source);
-      } catch(e){
-        console.error(e);
-        toast("OAuth callback failed.");
-      }
-    }
-  });
+  const SHARING = `${PORTAL}/sharing`;
 
   // Try existing session
   esriId.checkSignInStatus(SHARING)
-    .then(()=>{ signedIn = true;  updateAuthUI(); })
-    .catch(()=>{ signedIn = false; updateAuthUI(); });
+    .then(()=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
+    .catch(()=>{ signedIn = false; log("[oauth] no existing session"); updateAuthUI(); });
 
-  // Buttons
+  // Wire buttons
   btnIn?.addEventListener("click", async ()=>{
     try {
-      await esriId.getCredential(SHARING);
+      log("[oauth] Sign In clicked — requesting credential…");
+      const cred = await esriId.getCredential(SHARING);
       signedIn = true;
-      updateAuthUI();
-      toast("Signed in.");
-    } catch(_) {
-      /* canceled */
+      log(`[oauth] credential acquired for ${cred.server}; userId: ${cred.userId || "(unknown)"}; expires: ${new Date(cred.expires).toLocaleString()}`);
+      updateAuthUI(); toast("Signed in.");
+    } catch(e){
+      log(`[oauth] sign-in canceled or failed: ${e?.message||e}`, "warn");
+      toast("OAuth callback failed.");
     }
   });
 
   btnOut?.addEventListener("click", ()=>{
+    log("[oauth] Sign Out clicked — destroying credentials");
     esriId.destroyCredentials();
     signedIn = false;
     updateAuthUI();
@@ -355,13 +366,26 @@ function wireAuth(){
   });
 }
 
+function updateAuthUI(){
+  if ($("#btnSignIn") && $("#btnSignOut")){
+    $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
+    $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
+  }
+  disableEditingUI(REQUIRE_SIGN_IN && !signedIn);
+}
+function disableEditingUI(disable){
+  ["btnNew","btnSave","btnDelete"].forEach(id=>{
+    const b=$("#"+id); if (!b) return;
+    b.disabled = !!disable;
+    b.title = disable ? "Sign in to edit" : "";
+  });
+}
 
 /* ------------------ Quick filter (optional UI) ------------------ */
 function applyQuickFilter(kind){
   const now = new Date();
   let start = null, end = null, label = "all";
   if (kind==="weekend"){
-    // next Saturday 00:00 to Sunday 23:59:59
     const d = new Date(now);
     const dow = d.getDay();
     const add = (6 - dow + 7) % 7;
