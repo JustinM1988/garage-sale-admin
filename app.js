@@ -16,7 +16,7 @@ import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/Iden
 // Put your ArcGIS OAuth App ID here to REQUIRE sign-in
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
-  PORTAL_URL:  "https://cityofportland.maps.arcgis.com/",
+  PORTAL_URL:  "https://cityofportland.maps.arcgis.com",
   OAUTH_APPID: "VfADq37Q7WauhFsg",                     // <-- PASTE YOUR APP ID HERE
   CENTER:     [-97.323, 27.876],
   ZOOM:       13
@@ -291,8 +291,10 @@ async function init(){
 
 /* ------------------ Auth wiring ------------------ */
 function wireAuth(){
-  esriConfig.portalUrl = CONFIG.PORTAL_URL;
-  esriId.useSignInPage = false; // use popup flow
+  // normalize portal URL (no trailing slash) and force popup
+  const portal = String(CONFIG.PORTAL_URL).replace(/\/+$/,'');
+  esriConfig.portalUrl = portal;
+  esriId.useSignInPage = false;
 
   const btnIn  = document.querySelector("#btnSignIn");
   const btnOut = document.querySelector("#btnSignOut");
@@ -305,24 +307,44 @@ function wireAuth(){
     return;
   }
 
+  // ESM-safe popup + callback
   const info = new OAuthInfo({
-    appId:     CONFIG.OAUTH_APPID,
-    portalUrl: CONFIG.PORTAL_URL,
-    popup:     true,
-    // point to the file you just added & whitelisted:
+    appId:            CONFIG.OAUTH_APPID,
+    portalUrl:        portal,
+    popup:            true,
     popupCallbackUrl: "https://justinm1988.github.io/garage-sale-admin/oauth-callback.html"
   });
   esriId.registerOAuthInfos([info]);
 
-  const SHARING = `${info.portalUrl}/sharing`;
+  const SHARING = `${portal}/sharing`;
 
+  // Bridge for ESM: receive the URL from the popup and pass to IdentityManager
+  window.addEventListener("message", (evt)=>{
+    if (evt?.data?.type === "arcgis:oauth-callback" && evt?.data?.url){
+      try {
+        esriId._oAuthCallback(evt.data.url, evt.source);
+      } catch(e){
+        console.error(e);
+        toast("OAuth callback failed.");
+      }
+    }
+  });
+
+  // Try existing session
   esriId.checkSignInStatus(SHARING)
     .then(()=>{ signedIn = true;  updateAuthUI(); })
     .catch(()=>{ signedIn = false; updateAuthUI(); });
 
+  // Buttons
   btnIn?.addEventListener("click", async ()=>{
-    try { await esriId.getCredential(SHARING); signedIn = true; updateAuthUI(); toast("Signed in."); }
-    catch(_) {/* canceled */}
+    try {
+      await esriId.getCredential(SHARING);
+      signedIn = true;
+      updateAuthUI();
+      toast("Signed in.");
+    } catch(_) {
+      /* canceled */
+    }
   });
 
   btnOut?.addEventListener("click", ()=>{
