@@ -5,27 +5,60 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ArcGIS OAuth Callback</title>
   <style>
-    body { font: 14px system-ui, sans-serif; padding: 24px; color:#e6e6e6; background:#111; }
-    .ok { color:#9be49b; } .err { color:#ff9b9b; white-space:pre-wrap; }
+    body { font:14px system-ui, sans-serif; background:#111; color:#e6e6e6; padding:24px; }
+    .ok{color:#9be49b} .warn{color:#ffe38a} .err{color:#ff9b9b}
   </style>
 </head>
 <body>
   <div id="msg">Completing sign-in…</div>
+
   <script type="module">
-    // This is the official, supported way for popup flow.
     import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
-    esriId.completeOAuth2()
-      .then(() => {
-        document.getElementById("msg").innerHTML =
-          "<span class='ok'>Authentication complete.</span> You can close this window.";
-        setTimeout(() => { try { window.close(); } catch(_) {} }, 250);
-      })
-      .catch((err) => {
-        console.error(err);
-        document.getElementById("msg").innerHTML =
-          "<span class='err'>Authentication failed:\n" + (err?.message || err) + "</span>";
-      });
+
+    const msg = (html) => (document.getElementById("msg").innerHTML = html);
+
+    // 1) Immediately forward whatever ArcGIS sent us to the opener (reliable & fast)
+    const payload = window.location.hash || window.location.search || "";
+    const sentToOpener = (() => {
+      try {
+        if (window.opener && !window.opener.closed && payload) {
+          window.opener.postMessage({ type: "arcgis:auth", payload }, window.location.origin);
+          return true;
+        }
+      } catch (e) {
+        console.error("postMessage to opener failed:", e);
+      }
+      return false;
+    })();
+
+    // 2) Also attempt the official helper (works when opener is around and Edge cooperates)
+    let finished = false;
+    const slowTimer = setTimeout(() => {
+      if (!finished) {
+        if (sentToOpener) {
+          msg("<span class='ok'>Authentication complete.</span> You can close this window.");
+          try { window.close(); } catch {}
+        } else {
+          msg("<span class='warn'>Could not finish sign-in (no opener or no OAuth payload).</span>");
+        }
+      }
+    }, 1500);
+
+    try {
+      const cred = await esriId.completeOAuth2();
+      finished = true; clearTimeout(slowTimer);
+      msg("<span class='ok'>Authentication complete.</span> You can close this window.");
+      setTimeout(() => { try { window.close(); } catch {} }, 250);
+    } catch (err) {
+      finished = true; clearTimeout(slowTimer);
+      console.error("completeOAuth2 error:", err);
+      if (sentToOpener) {
+        msg("<span class='ok'>Authentication complete.</span> You can close this window.");
+        setTimeout(() => { try { window.close(); } catch {} }, 250);
+      } else {
+        msg("<span class='err'>Authentication failed.</span>");
+      }
+    }
   </script>
 </body>
 </html>
-
