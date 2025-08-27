@@ -311,12 +311,12 @@ async function init(){
 }
 
 /* ------------------ Auth wiring (ESM only) ------------------ */
+
 function wireAuth(){
-  const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");          // sanitize (no trailing slash)
+  const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");    // e.g. https://cityofportland.maps.arcgis.com
   const CALLBACK_URL = new URL("oauth-callback.html", window.location.href).href;
 
   esriConfig.portalUrl = PORTAL;
-  esriId.useSignInPage = false; // popup
 
   const btnIn  = $("#btnSignIn");
   const btnOut = $("#btnSignOut");
@@ -330,55 +330,25 @@ function wireAuth(){
   }
 
   log(`[oauth] portal: ${PORTAL}`);
-  log(`[oauth] callback: ${CALLBACK_URL}`);
+  log(`[oauth] popupCallbackUrl: ${CALLBACK_URL}`);
 
   const info = new OAuthInfo({
-    appId:     CONFIG.OAUTH_APPID,
-    portalUrl: PORTAL,
-    popup:     true,
-    popupCallbackUrl: CALLBACK_URL,
-    flowType:  "auto" // <<< add explicit PKCE support
+    appId:            CONFIG.OAUTH_APPID,
+    portalUrl:        PORTAL,
+    popup:            true,              // popup flow
+    popupCallbackUrl: CALLBACK_URL,     // the file above
+    flowType:         "auto"            // PKCE/two-step (recommended)
   });
   esriId.registerOAuthInfos([info]);
 
   const SHARING = `${PORTAL}/sharing`;
 
-  // Listen for our callback page (ESM bridge) sending us the token/hash
-  window.addEventListener("arcgis:auth:hash", (e)=>{
-    try {
-      log("[oauth] received hash from callback (ESM bridge)");
-      esriId.setOAuthResponseHash(e.detail);
-    } catch(err) {
-      log(`[oauth] setOAuthResponseHash failed: ${err?.message||err}`, "err");
-    }
-  });
-  window.addEventListener("arcgis:auth:search", (e)=>{
-    try {
-      log("[oauth] received search (PKCE/code) from callback (ESM bridge)");
-      esriId.setOAuthResponseHash(e.detail); // forwards ?code=… to IdentityManager
-    } catch(err) {
-      log(`[oauth] setOAuthResponseHash(query) failed: ${err?.message||err}`, "err");
-    }
-  });
-
-  // Fallback: also accept postMessage from the callback page
-  window.addEventListener("message", (e) => {
-    try {
-      if (e.origin !== window.location.origin) return; // same-origin guard
-      if (!e.data || e.data.type !== "arcgis:auth") return;
-      log("[oauth] received postMessage fallback from callback");
-      esriId.setOAuthResponseHash(e.data.payload);
-    } catch (err) {
-      log(`[oauth] postMessage handler error: ${err?.message||err}`, "err");
-    }
-  });
-
-  // Try existing session
+  // Restore session if present (IMPORTANT: same SHARING string every time)
   esriId.checkSignInStatus(SHARING)
-    .then((cred)=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
-    .catch(()=>{ signedIn = false; log("[oauth] no existing session"); updateAuthUI(); });
+    .then(cred => { signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
+    .catch(()   => { signedIn = false; log("[oauth] no existing session"); updateAuthUI(); });
 
-  // Wire buttons
+  // Buttons
   btnIn?.addEventListener("click", async ()=>{
     try {
       log("[oauth] Sign In clicked — requesting credential…");
@@ -400,33 +370,6 @@ function wireAuth(){
     toast("Signed out.");
   });
 }
-
-function updateAuthUI(){
-  if ($("#btnSignIn") && $("#btnSignOut")){
-    $("#btnSignIn").style.display = signedIn ? "none" : "inline-block";
-    $("#btnSignOut").style.display = signedIn ? "inline-block" : "none";
-  }
-  disableEditingUI(REQUIRE_SIGN_IN && !signedIn);
-}
-function disableEditingUI(disable){
-  ["btnNew","btnSave","btnDelete"].forEach(id=>{
-    const b=$("#"+id); if (!b) return;
-    b.disabled = !!disable;
-    b.title = disable ? "Sign in to edit" : "";
-  });
-}
-
-// Add once in wireAuth(), after registering OAuthInfo …
-window.addEventListener("message", (e) => {
-  try {
-    if (e.origin !== window.location.origin) return; // same-origin guard
-    if (!e.data || e.data.type !== "arcgis:auth") return;
-    log("[oauth] received postMessage fallback from callback");
-    esriId.setOAuthResponseHash(e.data.payload);
-  } catch (err) {
-    log(`[oauth] postMessage handler error: ${err?.message||err}`, "err");
-  }
-});
 
 
 
