@@ -6,62 +6,26 @@
   <title>ArcGIS OAuth Callback</title>
   <style>
     body { font: 14px system-ui, sans-serif; padding: 24px; color:#e6e6e6; background:#111; }
-    .ok { color:#9be49b; }
-    .err { color:#ff9b9b; white-space:pre-wrap; }
+    .ok { color:#9be49b; } .err { color:#ff9b9b; white-space:pre-wrap; }
   </style>
 </head>
 <body>
   <div id="msg">Completing sign-in…</div>
-
   <script type="module">
+    // This is the official, supported way for popup flow.
     import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
-
-    const msg = (html) => document.getElementById("msg").innerHTML = html;
-
-    // Fallback sender to the opener (so opener can finish via setOAuthResponseHash)
-    function fallbackSend() {
-      try {
-        const payload = window.location.hash || window.location.search || "";
-        if (window.opener && !window.opener.closed && payload) {
-          window.opener.postMessage({ type: "arcgis:auth", payload }, window.location.origin);
-          msg("<span class='ok'>Authentication complete.</span> You can close this window.");
-          setTimeout(() => { try { window.close(); } catch(_) {} }, 250);
-          return true;
-        }
-      } catch (e) {
-        console.error("postMessage fallback failed:", e);
-      }
-      return false;
-    }
-
-    // Race: try completeOAuth2(), but if it stalls use the fallback.
-    let finished = false;
-
-    // 1) Start the fallback timer (Edge sometimes never resolves completeOAuth2)
-    const t = setTimeout(() => {
-      if (!finished) {
-        console.warn("completeOAuth2() slow; using fallback.");
-        if (!fallbackSend()) {
-          msg("<span class='err'>Could not finish sign-in (no OAuth response).</span>");
-        }
-      }
-    }, 1500);
-
-    // 2) Try the official path
     esriId.completeOAuth2()
       .then(() => {
-        finished = true; clearTimeout(t);
-        msg("<span class='ok'>Authentication complete.</span> You can close this window.");
+        document.getElementById("msg").innerHTML =
+          "<span class='ok'>Authentication complete.</span> You can close this window.";
         setTimeout(() => { try { window.close(); } catch(_) {} }, 250);
       })
       .catch((err) => {
-        finished = true; clearTimeout(t);
-        console.error("completeOAuth2 error:", err);
-        // If completeOAuth2 throws, try the fallback once
-        if (!fallbackSend()) {
-          msg("<span class='err'>Authentication failed:\n" + (err?.message || err) + "</span>");
-        }
+        console.error(err);
+        document.getElementById("msg").innerHTML =
+          "<span class='err'>Authentication failed:\n" + (err?.message || err) + "</span>";
       });
   </script>
 </body>
 </html>
+
