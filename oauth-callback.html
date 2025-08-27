@@ -1,64 +1,26 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ArcGIS OAuth Callback</title>
-  <style>
-    body { font:14px system-ui, sans-serif; background:#111; color:#e6e6e6; padding:24px; }
-    .ok{color:#9be49b} .warn{color:#ffe38a} .err{color:#ff9b9b}
-  </style>
-</head>
-<body>
-  <div id="msg">Completing sign-in…</div>
-
-  <script type="module">
-    import esriId from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
-
-    const msg = (html) => (document.getElementById("msg").innerHTML = html);
-
-    // 1) Immediately forward whatever ArcGIS sent us to the opener (reliable & fast)
-    const payload = window.location.hash || window.location.search || "";
-    const sentToOpener = (() => {
-      try {
-        if (window.opener && !window.opener.closed && payload) {
-          window.opener.postMessage({ type: "arcgis:auth", payload }, window.location.origin);
-          return true;
-        }
-      } catch (e) {
-        console.error("postMessage to opener failed:", e);
-      }
-      return false;
-    })();
-
-    // 2) Also attempt the official helper (works when opener is around and Edge cooperates)
-    let finished = false;
-    const slowTimer = setTimeout(() => {
-      if (!finished) {
-        if (sentToOpener) {
-          msg("<span class='ok'>Authentication complete.</span> You can close this window.");
-          try { window.close(); } catch {}
+<html>
+  <head>
+    <script>
+      function loadHandler() {
+        if (opener) {
+          if (location.hash) {
+            // opener.console.log("oauth callback href:", location.href);
+            if (typeof opener.require === "function" && opener.require("esri/kernel")) {
+              opener.require("esri/kernel").id.setOAuthResponseHash(location.hash);
+            } else {
+              opener.dispatchEvent(new CustomEvent("arcgis:auth:hash", { detail: location.hash }));
+            }
+            close();
+          } else if (location.search) {
+            opener.dispatchEvent(new CustomEvent("arcgis:auth:location:search", { detail: location.search }));
+            close();
+          }
         } else {
-          msg("<span class='warn'>Could not finish sign-in (no opener or no OAuth payload).</span>");
+          close(); 
         }
       }
-    }, 1500);
-
-    try {
-      const cred = await esriId.completeOAuth2();
-      finished = true; clearTimeout(slowTimer);
-      msg("<span class='ok'>Authentication complete.</span> You can close this window.");
-      setTimeout(() => { try { window.close(); } catch {} }, 250);
-    } catch (err) {
-      finished = true; clearTimeout(slowTimer);
-      console.error("completeOAuth2 error:", err);
-      if (sentToOpener) {
-        msg("<span class='ok'>Authentication complete.</span> You can close this window.");
-        setTimeout(() => { try { window.close(); } catch {} }, 250);
-      } else {
-        msg("<span class='err'>Authentication failed.</span>");
-      }
-    }
-  </script>
-</body>
+    </script>
+  </head>
+  <body onload="loadHandler();"></body>
 </html>
