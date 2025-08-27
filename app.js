@@ -1,5 +1,4 @@
-// v3.9.0 — OAuth popup (ESM callback), Advanced Admin Debug (auth tools, diagnostics, net logger),
-// CSV export, guarded add, ghost pin, Sales & Guide modals, quick filters + theme, reliable Cancel UX.
+// v3.8.3 — ESM-only OAuth popup with callback bridge, richer Admin Debug
 
 import esriConfig    from "https://js.arcgis.com/4.29/@arcgis/core/config.js";
 import Map           from "https://js.arcgis.com/4.29/@arcgis/core/Map.js";
@@ -12,7 +11,7 @@ import OAuthInfo     from "https://js.arcgis.com/4.29/@arcgis/core/identity/OAut
 import esriId        from "https://js.arcgis.com/4.29/@arcgis/core/identity/IdentityManager.js";
 
 /* ------------------ Config ------------------ */
-// IMPORTANT: PORTAL_URL has no trailing slash
+// IMPORTANT: no trailing slash in PORTAL_URL
 const CONFIG = {
   LAYER_URL:   "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
   PORTAL_URL:  "https://cityofportland.maps.arcgis.com",
@@ -21,31 +20,25 @@ const CONFIG = {
   ZOOM:       13
 };
 
-// Require sign-in for edits (buttons disabled until signed in)
+// Require sign-in for edits
 const REQUIRE_SIGN_IN = true;
 
-// Optional ArcGIS API key for Esri basemaps; leave null to use OSM
+// Esri basemap key (optional)
 const ARCGIS_API_KEY = null;
 
-// Layer field names
+// Layer fields
 const FIELDS = { address: "Address", description: "Description", start: "Date_1", end: "EndDate" };
 
 /* ------------------ Tiny helpers ------------------ */
 const $ = (sel) => document.querySelector(sel);
-const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
 function toast(msg){
   const el = document.createElement("div");
   el.className = "toast glass";
-  el.style.position = "fixed";
-  el.style.left = "12px";
-  el.style.bottom = "12px";
-  el.style.zIndex = "999999";
   el.innerHTML = `<span class="toast-text">${msg}</span>`;
   document.body.appendChild(el);
-  setTimeout(()=> el.remove(), 2400);
+  setTimeout(()=> el.remove(), 2200);
 }
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
-const pad2 = (n)=> String(n).padStart(2,"0");
 
 function toEpochMaybe(v){
   if (v == null || v === "") return null;
@@ -59,8 +52,8 @@ function fromEpoch(ms){
   if (!ms) return "";
   const d = (typeof ms === "number") ? new Date(ms) : new Date(String(ms));
   if (isNaN(d)) return "";
-  const M = pad2(d.getMonth()+1);
-  const D = pad2(d.getDate());
+  const M = String(d.getMonth()+1).padStart(2,"0");
+  const D = String(d.getDate()).padStart(2,"0");
   const Y = d.getFullYear();
   return `${Y}-${M}-${D}`;
 }
@@ -79,6 +72,7 @@ function composeDescription(){
   return details ? `${time}: ${details}` : time;
 }
 function syncDesc(){ if($("#chkCompose")?.checked) $("#descriptionRaw").value = composeDescription(); }
+
 function houseSvg(fill="#ff4aa2", stroke="#fff"){
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
     <circle cx='32' cy='32' r='24' fill='${fill}'/>
@@ -88,159 +82,110 @@ function houseSvg(fill="#ff4aa2", stroke="#fff"){
   </svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
-function sqlTs(d){
-  const s = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+function sqlTs(d){ const pad=(n)=> String(n).padStart(2,"0");
+  const s = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   return `TIMESTAMP '${s}'`;
 }
 
-/* ------------------ Advanced Admin Debug ------------------ */
+/* ------------------ Admin Debug ------------------ */
 const ADMIN_PASSWORD = "123456";
-let dbg=null, debugEnabled=false, debugPaused=false, debugVerbose=false, debugNet=false;
+let dbg = null, debugEnabled=false, debugPaused=false, debugVerbose=false;
 
 function ensureDebugPanel(){
   if (dbg) return dbg;
-
-  // Inline styles so it looks good even without extra CSS
   const wrap = document.createElement("div");
   wrap.className = "debug-panel glass";
-  Object.assign(wrap.style, {
-    position:"fixed", left:"12px", top:"80px", width:"560px", height:"420px",
-    display:"none", zIndex:"99999", background:"rgba(20,24,32,.94)",
-    borderRadius:"10px", boxShadow:"0 10px 30px rgba(0,0,0,.4)", color:"#dfe7f5"
-  });
+  wrap.style.display = "none";
+  // make it roomy by default
+  wrap.style.width = "480px";
+  wrap.style.maxHeight = "70vh";
+  wrap.style.overflow = "hidden";
   wrap.innerHTML = `
-    <div class="debug-header" style="cursor:move; display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08);">
-      <div class="debug-title" style="font-weight:700">Admin Debug</div>
-      <span id="dbgBasemap" class="debug-badge">basemap: —</span>
-      <span id="dbgFilter"  class="debug-badge">filter: all</span>
-      <span id="dbgSigned"  class="debug-badge">auth: ?</span>
-      <div style="margin-left:auto; display:flex; gap:6px;">
-        <button id="dbgMax"     class="debug-btn">Max</button>
-        <button id="dbgPause"   class="debug-btn">Pause</button>
+    <div class="debug-header" style="cursor:move;">
+      <div class="debug-title">Admin Debug</div>
+      <div class="debug-controls">
+        <span id="dbgBasemap" class="debug-badge">basemap: —</span>
+        <span id="dbgFilter" class="debug-badge">filter: all</span>
+        <button id="dbgPause" class="debug-btn">Pause</button>
         <button id="dbgVerbose" class="debug-btn">Verbose: Off</button>
-        <button id="dbgNet"     class="debug-btn">Net Log: Off</button>
-        <button id="dbgClear"   class="debug-btn">Clear</button>
-        <button id="dbgCopy"    class="debug-btn">Copy</button>
-        <button id="dbgClose"   class="debug-btn">Close</button>
+        <button id="dbgAuth" class="debug-btn">Auth?</button>
+        <button id="dbgExport" class="debug-btn">Export CSV</button>
+        <button id="dbgArchive" class="debug-btn" title="Delete older than…">Archive…</button>
+        <button id="dbgClear" class="debug-btn">Clear</button>
+        <button id="dbgCopy" class="debug-btn">Copy</button>
+        <button id="dbgClose" class="debug-btn">Close</button>
       </div>
     </div>
-
-    <div style="padding:8px 12px; display:flex; gap:6px; flex-wrap:wrap; border-bottom:1px solid rgba(255,255,255,.08)">
-      <button id="dbgAuth"      class="debug-btn">Auth ▶ Inspect</button>
-      <button id="dbgAuthCheck" class="debug-btn">Auth ▶ Check</button>
-      <button id="dbgAuthIn"    class="debug-btn">Auth ▶ Sign In</button>
-      <button id="dbgAuthOut"   class="debug-btn">Auth ▶ Sign Out</button>
-      <button id="dbgAuthClear" class="debug-btn">Auth ▶ Clear Creds</button>
-      <button id="dbgDiag"      class="debug-btn">Diagnostics</button>
-      <button id="dbgExport"    class="debug-btn">Export CSV</button>
-      <button id="dbgArchive"   class="debug-btn">Archive…</button>
-    </div>
-
-    <div id="dbgBody" class="debug-body" style="padding:10px 12px; overflow:auto; height: calc(100% - 148px); font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;"></div>
-    <div id="dbgFooter" class="debug-footer" style="padding:8px 12px; border-top:1px solid rgba(255,255,255,.08); font:12px/1.3 system-ui, sans-serif;"></div>
-    <div id="dbgResizer" style="position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize; opacity:.4;">▢</div>
+    <div id="dbgBody" class="debug-body" style="overflow:auto;max-height:50vh;padding:8px 10px;"></div>
+    <div id="dbgFooter" class="debug-footer" style="padding:6px 10px;border-top:1px solid var(--fg-3, #444);font-size:12px;"></div>
   `;
   document.body.appendChild(wrap);
 
-  const body  = wrap.querySelector("#dbgBody");
-  const head  = wrap.querySelector(".debug-header");
-  const reszr = wrap.querySelector("#dbgResizer");
+  // Drag by header
+  const header = wrap.querySelector(".debug-header");
+  let drag=false, sx=0, sy=0, ox=0, oy=0;
+  header.addEventListener("mousedown",(e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
+  window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
+  window.addEventListener("mouseup",()=> drag=false);
 
-  function appendRow(msg, level="info"){
+  // Controls
+  wrap.querySelector("#dbgPause").onclick = ()=>{ debugPaused=!debugPaused; wrap.querySelector("#dbgPause").textContent = debugPaused?"Resume":"Pause"; log(`[debug] ${debugPaused?"paused":"resumed"}`); };
+  wrap.querySelector("#dbgVerbose").onclick = ()=>{ debugVerbose=!debugVerbose; wrap.querySelector("#dbgVerbose").textContent=`Verbose: ${debugVerbose?"On":"Off"}`; log(`[debug] verbose ${debugVerbose?"enabled":"disabled"}`); };
+  wrap.querySelector("#dbgClear").onclick = ()=>{ wrap.querySelector("#dbgBody").innerHTML=""; };
+  wrap.querySelector("#dbgCopy").onclick  = ()=>{
+    const text = [...wrap.querySelectorAll(".debug-row")].map(d=>d.textContent).join("\n");
+    navigator.clipboard?.writeText(text); toast("Debug copied");
+  };
+  wrap.querySelector("#dbgClose").onclick = ()=>{ wrap.style.display="none"; debugEnabled=false; };
+
+  // Admin tools
+  wrap.querySelector("#dbgExport").onclick = exportCSV;
+  wrap.querySelector("#dbgArchive").onclick = archiveDialog;
+
+  // Auth inspector
+  wrap.querySelector("#dbgAuth").onclick = ()=>{
+    try{
+      const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
+      const sharing = `${portal}/sharing`;
+      log(`[auth] portal: ${portal}`);
+      log(`[auth] appId: ${CONFIG.OAUTH_APPID || "(none)"}`);
+      log(`[auth] signedIn flag: ${signedIn}`);
+      const creds = esriId.credentials || [];
+      log(`[auth] credentials total: ${creds.length}`);
+      const c = esriId.findCredential(sharing);
+      if (c){
+        const mins = Math.max(0, Math.round((c.expires - Date.now())/60000));
+        log(`[auth] userId: ${c.userId || "(unknown)"}; expires in: ${mins} min; server: ${c.server}`);
+      } else {
+        log("[auth] no credential bound to /sharing");
+      }
+    }catch(e){ log(`[auth] inspector error: ${e?.message||e}`, "err"); }
+  };
+
+  // Error pipes
+  window.addEventListener("error",(e)=> log(`JS Error: ${e.message}`, "err"));
+  window.addEventListener("unhandledrejection",(e)=> log(`Unhandled: ${e.reason}`, "err"));
+
+  dbg = {
+    wrap,
+    log,
+    footer:(t)=> wrap.querySelector("#dbgFooter").textContent = t,
+    setBasemap:(t)=> wrap.querySelector("#dbgBasemap").textContent = `basemap: ${t}`,
+    setFilterBadge:(t)=> wrap.querySelector("#dbgFilter").textContent = `filter: ${t}`
+  };
+  return dbg;
+
+  function log(msg, level="info"){
     if (!debugEnabled || debugPaused) return;
+    const body = wrap.querySelector("#dbgBody");
     const row = document.createElement("div");
+    row.className = "debug-row";
     const bullet = level==="err" ? "✖" : level==="warn" ? "⚠" : "•";
     row.textContent = `${bullet} ${msg}`;
     body.appendChild(row);
     body.scrollTop = body.scrollHeight;
   }
-
-  // drag
-  (()=>{
-    let drag=false, sx=0, sy=0, ox=0, oy=0;
-    head.addEventListener("mousedown",(e)=>{ drag=true; sx=e.clientX; sy=e.clientY; const r=wrap.getBoundingClientRect(); ox=r.left; oy=r.top; e.preventDefault(); });
-    window.addEventListener("mousemove",(e)=>{ if(!drag) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.left=(ox+dx)+"px"; wrap.style.top=(oy+dy)+"px"; wrap.style.right="auto"; });
-    window.addEventListener("mouseup",()=> drag=false);
-  })();
-
-  // resize
-  (()=>{
-    let r=false, sx=0, sy=0, sw=0, sh=0;
-    reszr.addEventListener("mousedown",(e)=>{ r=true; sx=e.clientX; sy=e.clientY; sw=wrap.offsetWidth; sh=wrap.offsetHeight; e.preventDefault(); });
-    window.addEventListener("mousemove",(e)=>{ if(!r) return; const dx=e.clientX-sx, dy=e.clientY-sy; wrap.style.width=(sw+dx)+"px"; wrap.style.height=(sh+dy)+"px"; });
-    window.addEventListener("mouseup",()=> r=false);
-  })();
-
-  // header buttons
-  wrap.querySelector("#dbgMax").onclick = ()=>{
-    if (wrap.style.width!=="min(96vw,980px)"){
-      wrap.style.left = "1.5vw"; wrap.style.top="7vh";
-      wrap.style.width = "min(96vw,980px)"; wrap.style.height = "70vh";
-    } else {
-      wrap.style.width="560px"; wrap.style.height="420px";
-    }
-  };
-  wrap.querySelector("#dbgPause").onclick = ()=>{ debugPaused=!debugPaused; wrap.querySelector("#dbgPause").textContent = debugPaused?"Resume":"Pause"; appendRow(`[debug] ${debugPaused?"paused":"resumed"}`); };
-  wrap.querySelector("#dbgVerbose").onclick = ()=>{ debugVerbose=!debugVerbose; wrap.querySelector("#dbgVerbose").textContent=`Verbose: ${debugVerbose?"On":"Off"}`; appendRow(`[debug] verbose ${debugVerbose?"enabled":"disabled"}`); };
-  wrap.querySelector("#dbgNet").onclick = ()=>{ debugNet=!debugNet; wrap.querySelector("#dbgNet").textContent=`Net Log: ${debugNet?"On":"Off"}`; appendRow(`[net] logger ${debugNet?"enabled":"disabled"}`); };
-  wrap.querySelector("#dbgClear").onclick = ()=>{ body.innerHTML=""; };
-  wrap.querySelector("#dbgCopy").onclick  = ()=>{
-    const text = [...wrap.querySelectorAll("#dbgBody .debug-row, #dbgBody div")].map(d=>d.textContent).join("\n");
-    navigator.clipboard?.writeText(text);
-    toast("Debug copied");
-  };
-  wrap.querySelector("#dbgClose").onclick = ()=>{ wrap.style.display="none"; debugEnabled=false; };
-
-  // admin tools
-  wrap.querySelector("#dbgExport").onclick = exportCSV;
-  wrap.querySelector("#dbgArchive").onclick = archiveDialog;
-
-  // auth inspector
-  wrap.querySelector("#dbgAuth").onclick = ()=> authInspector();
-  wrap.querySelector("#dbgAuthCheck").onclick = ()=> authCheck();
-  wrap.querySelector("#dbgAuthIn").onclick = ()=> $("#btnSignIn")?.click();
-  wrap.querySelector("#dbgAuthOut").onclick = ()=> $("#btnSignOut")?.click();
-  wrap.querySelector("#dbgAuthClear").onclick = ()=> { esriId.destroyCredentials(); appendRow("[auth] credentials cleared"); updateAuthBadge(); };
-
-  // diagnostics
-  wrap.querySelector("#dbgDiag").onclick = ()=> runDiagnostics();
-
-  // Error pipes
-  window.addEventListener("error",(e)=> appendRow(`JS Error: ${e.message}`, "err"));
-  window.addEventListener("unhandledrejection",(e)=> appendRow(`Unhandled: ${e.reason}`, "err"));
-
-  // network logger (fetch)
-  const mask = (u)=> String(u).replace(/token=[^&]+/gi,"token=***");
-  const short = (u)=> mask(u).replace(/^https?:\/\//,'').replace(/(\?.*)/,'').slice(0,160);
-  const origFetch = window.fetch.bind(window);
-  window.fetch = async function(input, init){
-    const url = typeof input === "string" ? input : input?.url || "";
-    const method = (init?.method || "GET").toUpperCase();
-    const t0 = performance.now();
-    const loggable = debugNet && /arcgis|esri|\.maps\.arcgis\.com|arcgisonline|\/arcgis\//i.test(url);
-    if (loggable) appendRow(`[net→] ${method} ${short(url)}`);
-    try{
-      const res = await origFetch(input, init);
-      if (loggable) appendRow(`[net←] ${res.status} ${res.ok?"OK":"ERR"} ${Math.round(performance.now()-t0)}ms ${short(url)}`);
-      return res;
-    }catch(e){
-      if (loggable) appendRow(`[net✖] ${method} ${short(url)} — ${e?.message||e}`, "err");
-      throw e;
-    }
-  };
-
-  // expose controls
-  dbg = {
-    wrap,
-    log: (msg, level)=> appendRow(msg, level),
-    footer:(t)=> wrap.querySelector("#dbgFooter").textContent = t,
-    setBasemap:(t)=> wrap.querySelector("#dbgBasemap").textContent = `basemap: ${t}`,
-    setFilterBadge:(t)=> wrap.querySelector("#dbgFilter").textContent = `filter: ${t}`,
-    setSigned:(t)=> wrap.querySelector("#dbgSigned").textContent = `auth: ${t}`
-  };
-  return dbg;
 }
-
 function openAdmin(){
   ensureDebugPanel();
   if (debugEnabled){ dbg.wrap.style.display="block"; return; }
@@ -249,9 +194,7 @@ function openAdmin(){
   debugEnabled = true;
   dbg.wrap.style.display = "block";
   log(`Admin debug opened`);
-  updateAuthBadge();
 }
-
 function log(msg, level){ ensureDebugPanel(); dbg.log(msg, level); }
 function setBasemapBadge(t){ ensureDebugPanel(); dbg.setBasemap(t); }
 function setFilterBadge(t){ ensureDebugPanel(); dbg.setFilterBadge(t); }
@@ -260,80 +203,6 @@ function updateFooter(){
   const c=view.center;
   const info=`center: ${c.longitude.toFixed(5)}, ${c.latitude.toFixed(5)}  |  zoom: ${view.zoom}  |  scale: ${Math.round(view.scale).toLocaleString()}  |  features: ${_featureCount}`;
   dbg?.footer(info);
-}
-function updateAuthBadge(){
-  const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
-  const sharing = `${portal}/sharing`;
-  const cred = esriId.findCredential?.(sharing);
-  const label = cred ? `signed-in as ${cred.userId || "?"}` : "signed-out";
-  dbg?.setSigned(label);
-}
-
-/* ---- Auth inspector + diagnostics ---- */
-function authInspector(){
-  const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
-  const sharing = `${portal}/sharing`;
-  log(`[auth] portal: ${portal}`);
-  log(`[auth] appId: ${CONFIG.OAUTH_APPID || "(none)"}`);
-  const creds = esriId.credentials || [];
-  log(`[auth] credentials total: ${creds.length}`);
-  const c = esriId.findCredential(sharing);
-  if (c){
-    const mins = Math.max(0, Math.round((c.expires - Date.now())/60000));
-    log(`[auth] userId: ${c.userId || "(unknown)"}`);
-    log(`[auth] expires in: ${mins} min; server: ${c.server}`);
-  } else {
-    log("[auth] no credential for /sharing");
-  }
-}
-
-async function authCheck(){
-  const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
-  const sharing = `${portal}/sharing`;
-  try{
-    await esriId.checkSignInStatus(sharing);
-    log("[auth] checkSignInStatus: already signed in");
-  }catch(_){
-    log("[auth] checkSignInStatus: not signed in");
-  }
-}
-
-async function runDiagnostics(){
-  const portal = CONFIG.PORTAL_URL.replace(/\/+$/,"");
-  const callback = new URL("oauth-callback.html", window.location.href).href;
-  log("[diag] running…");
-
-  // 1) callback reachable (same origin)
-  try{
-    const r = await fetch(callback, {cache:"no-store"});
-    log(`[diag] callback: ${r.ok?"OK":"HTTP "+r.status} — ${callback}`);
-  }catch(e){ log(`[diag] callback error: ${e?.message||e}`, "err"); }
-
-  // 2) portal info
-  try{
-    const r = await fetch(`${portal}/sharing/rest/info?f=json`, {credentials:"omit"});
-    const j = await r.json();
-    log(`[diag] portal info: ${r.ok?"OK":"HTTP "+r.status} — authInfo: ${!!j?.authInfo}`);
-  }catch(e){ log(`[diag] portal info error: ${e?.message||e}`, "err"); }
-
-  // 3) layer JSON + capabilities
-  try{
-    const r = await fetch(`${CONFIG.LAYER_URL}?f=json`);
-    const j = await r.json();
-    const caps = (j?.capabilities||"").split(",").map(s=>s.trim()).filter(Boolean).slice(0,6).join(", ");
-    log(`[diag] layer: ${r.ok?"OK":"HTTP "+r.status} — editable: ${/Update|Create|Delete/i.test(j?.capabilities||"")}, caps: ${caps||"(none)"}`);
-  }catch(e){ log(`[diag] layer json error: ${e?.message||e}`, "err"); }
-
-  // 4) layer query smoke (no token)
-  try{
-    const r = await fetch(`${CONFIG.LAYER_URL}/query?where=1=0&outFields=OBJECTID&f=json`);
-    const j = await r.json();
-    const ok = j && ("objectIds" in j || "features" in j || "count" in j);
-    log(`[diag] layer query (anon): ${ok?"OK":"needs token or CORS blocked"}`);
-  }catch(e){ log(`[diag] layer query error: ${e?.message||e}`, "err"); }
-
-  // 5) current credential summary
-  authInspector();
 }
 
 /* ------------------ App state ------------------ */
@@ -349,10 +218,10 @@ async function init(){
   $("#btnSales") ?.addEventListener("click", showSalesList);
   $("#btnGuide") ?.addEventListener("click", showGuide);
 
-  log(`app v3.9.0 starting`);
+  log(`app v3.8.3 starting`);
   log(`UA: ${navigator.userAgent}`);
 
-  // Basemap (OSM fallback)
+  // Basemap
   if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); }
   else { map = new Map({ basemap:"osm" }); setBasemapBadge("osm"); log(`basemap: OSM (no key)`); }
 
@@ -376,22 +245,22 @@ async function init(){
 
     view.whenLayerView(layer).then((lv)=>{
       log(`layerview created`);
-      lv.watch("updating",(u)=> debugVerbose && log(`layerview updating: ${u}`));
+      lv.watch("updating",(u)=> log(`layerview updating: ${u}`));
     }).catch(e=> log(`whenLayerView error: ${e?.message||e}`, "err"));
   }catch(e){ log(`layer load error: ${e?.message||e}`, "err"); }
 
-  // Editing helper layers
+  // Editing helpers
   editLayer  = new GraphicsLayer(); map.add(editLayer);
   ghostLayer = new GraphicsLayer(); map.add(ghostLayer);
 
-  // Search widget
+  // Search
   search = new Search({ view }); view.ui.add(search, "top-right");
-  search.on("select-result", (e)=> debugVerbose && log(`select-result: ${e.result?.name || "(no name)"}`));
+  search.on("select-result", (e)=> log(`select-result: ${e.result?.name || "(no name)"}`));
 
-  // OAuth (sign-in/out + gating)
+  // OAuth
   wireAuth();
 
-  // Ghost pin while in New mode (throttled unless verbose)
+  // Ghost pin while in New mode
   let lastMove=0;
   view.on("pointer-move", (e)=>{
     if (!inNewMode) return;
@@ -441,13 +310,13 @@ async function init(){
   setStatus("Click a sale to edit, or click New to add a sale.");
 }
 
-/* ------------------ Auth wiring ------------------ */
+/* ------------------ Auth wiring (ESM only) ------------------ */
 function wireAuth(){
   const PORTAL = CONFIG.PORTAL_URL.replace(/\/+$/,"");          // sanitize (no trailing slash)
   const CALLBACK_URL = new URL("oauth-callback.html", window.location.href).href;
 
   esriConfig.portalUrl = PORTAL;
-  esriId.useSignInPage = false; // use popup
+  esriId.useSignInPage = false; // popup
 
   const btnIn  = $("#btnSignIn");
   const btnOut = $("#btnSignOut");
@@ -473,6 +342,25 @@ function wireAuth(){
 
   const SHARING = `${PORTAL}/sharing`;
 
+  // Listen for our callback page (ESM bridge) sending us the token/hash
+  window.addEventListener("arcgis:auth:hash", (e)=>{
+    try {
+      log("[oauth] received hash from callback (ESM bridge)");
+      esriId.setOAuthResponseHash(e.detail);
+    } catch(err) {
+      log(`[oauth] setOAuthResponseHash failed: ${err?.message||err}`, "err");
+    }
+  });
+  window.addEventListener("arcgis:auth:search", (e)=>{
+    try {
+      log("[oauth] received search (PKCE/code) from callback (ESM bridge)");
+      // IdentityManager parses both hash or query; forward as-is
+      esriId.setOAuthResponseHash(e.detail);
+    } catch(err) {
+      log(`[oauth] setOAuthResponseHash(query) failed: ${err?.message||err}`, "err");
+    }
+  });
+
   // Try existing session
   esriId.checkSignInStatus(SHARING)
     .then(()=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
@@ -485,10 +373,10 @@ function wireAuth(){
       const cred = await esriId.getCredential(SHARING);
       signedIn = true;
       log(`[oauth] credential acquired for ${cred.server}; userId: ${cred.userId || "(unknown)"}; expires: ${new Date(cred.expires).toLocaleString()}`);
-      updateAuthUI(); updateAuthBadge(); toast("Signed in.");
+      updateAuthUI(); toast("Signed in.");
     } catch(e){
       log(`[oauth] sign-in canceled or failed: ${e?.message||e}`, "warn");
-      toast("OAuth callback failed.");
+      toast("OAuth failed or was canceled.");
     }
   });
 
@@ -496,7 +384,7 @@ function wireAuth(){
     log("[oauth] Sign Out clicked — destroying credentials");
     esriId.destroyCredentials();
     signedIn = false;
-    updateAuthUI(); updateAuthBadge();
+    updateAuthUI();
     toast("Signed out.");
   });
 }
