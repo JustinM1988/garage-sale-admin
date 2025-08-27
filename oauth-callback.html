@@ -1,26 +1,20 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>OAuth 2.0 Callback</title>
-</head>
+<head><meta charset="utf-8"><title>OAuth 2.0 Callback</title></head>
 <body>
 <script>
-/* Bridge the OAuth response back to the opener's ArcGIS IdentityManager */
+/* ESM-safe callback: send full URL back to opener, then close */
 (function () {
-  function closeSoon(){ setTimeout(function(){ window.close(); }, 10); }
   try {
-    if (window.opener && window.opener.require) {
-      window.opener.require(["esri/identity/IdentityManager"], function (esriId) {
-        // Hand the full URL (with ?code=... or error=...) to IdentityManager
-        esriId._oAuthCallback(window.location.href, window);
-        closeSoon();
-      });
-    } else {
-      // Fallback: at least close if opener/require aren't available
-      closeSoon();
+    if (window.opener) {
+      window.opener.postMessage(
+        { type: "arcgis:oauth-callback", url: window.location.href },
+        "*"
+      );
     }
-  } catch (e) { closeSoon(); }
+  } finally {
+    setTimeout(function(){ window.close(); }, 50);
+  }
 })();
 </script>
 </body>
