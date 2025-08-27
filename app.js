@@ -222,7 +222,7 @@ async function init(){
   log(`UA: ${navigator.userAgent}`);
 
   // Basemap
-  if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); }
+  if (ARCGIS_API_KEY){ esriConfig.apiKey = ARCGIS_API_KEY; map = new Map({ basemap:"arcgis-dark-gray" }); setBasemapBadge("arcgis-dark-gray"); log(`basemap: ArcGIS (apiKey)`); }
   else { map = new Map({ basemap:"osm" }); setBasemapBadge("osm"); log(`basemap: OSM (no key)`); }
 
   // View
@@ -336,7 +336,8 @@ function wireAuth(){
     appId:     CONFIG.OAUTH_APPID,
     portalUrl: PORTAL,
     popup:     true,
-    popupCallbackUrl: CALLBACK_URL
+    popupCallbackUrl: CALLBACK_URL,
+    flowType:  "auto" // <<< add explicit PKCE support
   });
   esriId.registerOAuthInfos([info]);
 
@@ -354,16 +355,27 @@ function wireAuth(){
   window.addEventListener("arcgis:auth:search", (e)=>{
     try {
       log("[oauth] received search (PKCE/code) from callback (ESM bridge)");
-      // IdentityManager parses both hash or query; forward as-is
-      esriId.setOAuthResponseHash(e.detail);
+      esriId.setOAuthResponseHash(e.detail); // forwards ?code=… to IdentityManager
     } catch(err) {
       log(`[oauth] setOAuthResponseHash(query) failed: ${err?.message||err}`, "err");
     }
   });
 
+  // Fallback: also accept postMessage from the callback page
+  window.addEventListener("message", (e) => {
+    try {
+      if (e.origin !== window.location.origin) return; // same-origin guard
+      if (!e.data || e.data.type !== "arcgis:auth") return;
+      log("[oauth] received postMessage fallback from callback");
+      esriId.setOAuthResponseHash(e.data.payload);
+    } catch (err) {
+      log(`[oauth] postMessage handler error: ${err?.message||err}`, "err");
+    }
+  });
+
   // Try existing session
   esriId.checkSignInStatus(SHARING)
-    .then(()=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
+    .then((cred)=>{ signedIn = true;  log("[oauth] already signed in"); updateAuthUI(); })
     .catch(()=>{ signedIn = false; log("[oauth] no existing session"); updateAuthUI(); });
 
   // Wire buttons
