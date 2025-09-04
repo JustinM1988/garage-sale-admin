@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organization Verification Tool</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: #0b1118;
+            color: #f0f6ff;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(24, 30, 44, 0.8);
+            padding: 2rem;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .org-info {
+            background: rgba(60, 240, 212, 0.1);
+            border: 1px solid #3cf0d4;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .test-btn {
+            background: #3cf0d4;
+            color: #041311;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin: 8px 4px;
+        }
+        .warning {
+            background: rgba(245, 158, 11, 0.1);
+            border-left: 3px solid #f59e0b;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: #fbbf24;
+        }
+        .error {
+            color: #ef4444;
+        }
+        .success {
+            color: #10b981;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Organization Verification Tool</h1>
+
+        <div class="warning">
+            <strong>⚠️ Important:</strong> We need to verify that your ArcGIS account belongs to City of Portland, TX (not Oregon or other Portland).
+        </div>
+
+        <h3>📋 Your Current ArcGIS Organization Info:</h3>
+        <div class="org-info" id="orgInfo">
+            Click "Check My Organization" to see your details...
+        </div>
+
+        <button class="test-btn" onclick="checkOrganization()">🔍 Check My Organization</button>
+        <button class="test-btn" onclick="temporaryBypass()">⚠️ Temporary Bypass (for testing)</button>
+
+        <h3>✅ What We're Looking For:</h3>
+        <ul>
+            <li><strong>Organization Name:</strong> Should contain "Portland" and "TX" or "Texas"</li>
+            <li><strong>Portal URL:</strong> Should be something like cityofportland.maps.arcgis.com</li>
+            <li><strong>Location:</strong> Should indicate Texas, not Oregon</li>
+        </ul>
+
+        <div id="results"></div>
+
+        <h3>🔧 Next Steps Based on Results:</h3>
+        <div id="recommendations">
+            After checking your organization, we'll know whether to:
+            <ul>
+                <li>✅ <strong>Allow your Org ID</strong> (if it's Portland TX)</li>
+                <li>❌ <strong>Block your Org ID</strong> (if it's wrong Portland)</li>
+                <li>🔄 <strong>Disable org restrictions</strong> (for testing)</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        async function checkOrganization() {
+            const orgInfo = document.getElementById('orgInfo');
+            const results = document.getElementById('results');
+            const recommendations = document.getElementById('recommendations');
+
+            orgInfo.innerHTML = 'Loading your organization details...';
+
+            try {
+                // Get user's session if available
+                const session = JSON.parse(sessionStorage.getItem('garage_sale_auth_session_v1') || '{}');
+
+                if (!session.access_token) {
+                    throw new Error('Not signed in. Please sign in first.');
+                }
+
+                // Fetch user details
+                const url = `https://www.arcgis.com/sharing/rest/community/self?f=json&token=${session.access_token}`;
+                const response = await fetch(url);
+                const userData = await response.json();
+
+                if (userData.error) {
+                    throw new Error(userData.error.message);
+                }
+
+                // Display organization details
+                const orgDetails = `
+Organization Name: ${userData.orgTitle || 'Not provided'}
+Organization ID: ${userData.orgId || 'Not provided'}
+Portal URL: ${userData.portalUrl || 'Not provided'}
+User: ${userData.fullName || userData.username}
+Region: ${userData.region || 'Not provided'}
+Description: ${userData.orgDescription || 'Not provided'}
+                `;
+
+                orgInfo.innerHTML = orgDetails;
+
+                // Analyze if this looks like Portland TX
+                const orgName = (userData.orgTitle || '').toLowerCase();
+                const portalUrl = (userData.portalUrl || '').toLowerCase();
+                const description = (userData.orgDescription || '').toLowerCase();
+
+                let isPortlandTX = false;
+                let analysis = [];
+
+                if (orgName.includes('portland') && (orgName.includes('tx') || orgName.includes('texas'))) {
+                    isPortlandTX = true;
+                    analysis.push('✅ Organization name contains "Portland" and "TX/Texas"');
+                } else if (orgName.includes('portland')) {
+                    analysis.push('⚠️ Organization name contains "Portland" but no "TX/Texas"');
+                } else {
+                    analysis.push('❌ Organization name does not contain "Portland"');
+                }
+
+                if (portalUrl.includes('cityofportland') || portalUrl.includes('portland')) {
+                    analysis.push('✅ Portal URL suggests Portland organization');
+                } else {
+                    analysis.push('⚠️ Portal URL does not clearly indicate Portland');
+                }
+
+                if (description.includes('texas') || description.includes('tx')) {
+                    isPortlandTX = true;
+                    analysis.push('✅ Description mentions Texas');
+                }
+
+                results.innerHTML = `
+                    <h3>🔍 Analysis Results:</h3>
+                    <div class="${isPortlandTX ? 'success' : 'error'}">
+                        ${analysis.join('<br>')}
+                    </div>
+                `;
+
+                if (isPortlandTX) {
+                    recommendations.innerHTML = `
+                        <div class="success">
+                            <h4>✅ Looks like Portland, TX!</h4>
+                            <p>Your Org ID <code>${userData.orgId}</code> appears to be City of Portland, Texas. 
+                            We can safely use this in the organization restrictions.</p>
+                        </div>
+                    `;
+                } else {
+                    recommendations.innerHTML = `
+                        <div class="error">
+                            <h4>❌ This might NOT be Portland, TX</h4>
+                            <p>Your organization doesn't clearly indicate Portland, Texas. 
+                            You may need to either:</p>
+                            <ul>
+                                <li>Contact your IT admin to verify the correct ArcGIS organization</li>
+                                <li>Temporarily disable organization restrictions</li>
+                                <li>Use a different ArcGIS account for Portland, TX</li>
+                            </ul>
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                orgInfo.innerHTML = `Error: ${error.message}`;
+                results.innerHTML = `<div class="error">Please sign in to your garage sale app first, then come back here.</div>`;
+            }
+        }
+
+        function temporaryBypass() {
+            const bypassed = confirm(`
+This will temporarily disable organization restrictions so you can test the app.
+
+⚠️ WARNING: This allows ANY ArcGIS user to access the app!
+
+Only use this for testing. Do you want to continue?
+            `);
+
+            if (bypassed) {
+                // Create a config that bypasses organization checks
+                const bypassConfig = {
+                    CLIENT_ID: "VfADq37Q7WauhFsg",
+                    PORTAL: "https://www.arcgis.com/sharing/rest",
+                    LAYER_URL: "https://services3.arcgis.com/DAf01WuIltSLujAv/arcgis/rest/services/Garage_Sales/FeatureServer/0",
+                    CENTER: [-97.323, 27.876],
+                    ZOOM: 13,
+                    ALLOWED_ORGANIZATIONS: ["*"], // Allow any organization
+                    ORGANIZATION_NAME: "Testing Mode",
+                    REQUIRE_SIGN_IN: true,
+                    AUTO_COMPOSE_DESCRIPTION: true,
+                    MULTI_DAY_SALES: true,
+                    GEOCODING_SERVICE: "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer"
+                };
+
+                localStorage.setItem('bypass_org_config', JSON.stringify(bypassConfig));
+                alert('Organization restrictions temporarily disabled. Reload your garage sale app to test.');
+            }
+        }
+    </script>
+</body>
+</html>
