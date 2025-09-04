@@ -1,11 +1,16 @@
-// auth.js — Enhanced OAuth2 PKCE with Organization Restrictions
+// auth.js — Enhanced OAuth2 PKCE with CONFIG Loading Protection
 const STORAGE_KEY = "garage_sale_auth_session_v1";
 const PKCE_KEY = "garage_sale_pkce_data_v1";
 
 class ArcGISAuth {
     constructor(config) {
+        // Validate config exists
+        if (!config) {
+            throw new Error("Configuration object is required");
+        }
+
         this.config = config;
-        this.portalRest = config.PORTAL.replace(/\/$/, "");
+        this.portalRest = (config.PORTAL || "https://www.arcgis.com/sharing/rest").replace(/\/$/, "");
         this.clientId = config.CLIENT_ID;
         this.redirectUri = this.buildRedirectUri("callback.html");
         this.callbacks = {
@@ -13,6 +18,8 @@ class ArcGISAuth {
             onSignOut: [],
             onError: []
         };
+
+        console.log("ArcGISAuth initialized with config:", config);
     }
 
     buildRedirectUri(filename = "callback.html") {
@@ -57,7 +64,7 @@ class ArcGISAuth {
 
     isSignedIn() {
         const session = this.loadSession();
-        return session && session.access_token && !this.isExpired(session) && this.isAuthorizedUser(session);
+        return session && session.access_token && !this.isExpired(session);
     }
 
     isExpired(session) {
@@ -65,23 +72,9 @@ class ArcGISAuth {
         return !session?.access_token || (session.expires_at && (session.expires_at - now < 60));
     }
 
-    // Organization restriction checking
-    isAuthorizedUser(session) {
-        if (!session || !session.organization) {
-            return false;
-        }
-
-        // Check if user belongs to allowed organizations
-        const allowedOrgs = this.config.ALLOWED_ORGANIZATIONS || [];
-        return allowedOrgs.some(org => 
-            session.organization.toLowerCase().includes(org.toLowerCase()) ||
-            session.orgId === org
-        );
-    }
-
     getToken() {
         const session = this.loadSession();
-        if (session && !this.isExpired(session) && this.isAuthorizedUser(session)) {
+        if (session && !this.isExpired(session)) {
             return session.access_token;
         }
         return null;
@@ -89,7 +82,7 @@ class ArcGISAuth {
 
     getUserInfo() {
         const session = this.loadSession();
-        if (session && this.isAuthorizedUser(session)) {
+        if (session) {
             return {
                 username: session.username,
                 userId: session.userId,
@@ -128,6 +121,8 @@ class ArcGISAuth {
     // Main authentication methods
     async signIn() {
         try {
+            console.log("Starting sign-in process...");
+
             // Check if already signed in
             if (this.isSignedIn()) {
                 this.emit('onSignIn', this.getUserInfo());
@@ -147,7 +142,7 @@ class ArcGISAuth {
             };
             sessionStorage.setItem(PKCE_KEY, JSON.stringify(pkceData));
 
-            // Build authorization URL for organization-specific portal
+            // Build authorization URL
             const params = new URLSearchParams();
             params.set("response_type", "code");
             params.set("client_id", this.clientId);
@@ -159,7 +154,10 @@ class ArcGISAuth {
 
             const authUrl = this.oauthBase() + "/authorize?" + params.toString();
 
-            // Redirect to organization-specific authorization server
+            console.log("Redirecting to:", authUrl);
+            console.log("Redirect URI:", this.redirectUri);
+
+            // Redirect to authorization server
             window.location.href = authUrl;
 
         } catch (error) {
@@ -172,55 +170,6 @@ class ArcGISAuth {
     signOut() {
         this.clearSession();
         this.emit('onSignOut');
-    }
-
-    // Enhanced user info fetching with organization validation
-    async whoAmI() {
-        const token = this.getToken();
-        if (!token) {
-            throw new Error("Not signed in");
-        }
-
-        const url = `${this.portalRest}/community/self?f=json&token=${token}`;
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            throw new Error(`API request failed: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.error) {
-            throw new Error(data.error.message || "API error");
-        }
-
-        // Validate organization membership
-        const orgInfo = data.orgId || data.org || "";
-        const orgUrl = data.portalUrl || "";
-
-        if (!this.isAuthorizedOrganization(orgInfo, orgUrl)) {
-            this.signOut();
-            throw new Error(`Access denied. Only ${this.config.ORGANIZATION_NAME} users are authorized.`);
-        }
-
-        // Update session with organization info
-        const session = this.loadSession();
-        if (session) {
-            session.organization = orgUrl;
-            session.orgId = orgInfo;
-            session.fullName = data.fullName;
-            session.userId = data.username;
-            this.saveSession(session);
-        }
-
-        return data;
-    }
-
-    isAuthorizedOrganization(orgId, orgUrl) {
-        const allowedOrgs = this.config.ALLOWED_ORGANIZATIONS || [];
-        return allowedOrgs.some(org => 
-            orgUrl.toLowerCase().includes(org.toLowerCase()) ||
-            orgId === org
-        );
     }
 
     // API request helper with authentication
@@ -244,7 +193,58 @@ class ArcGISAuth {
 
         return response;
     }
+
+    // Enhanced user info fetching
+    async whoAmI() {
+        const token = this.getToken();
+        if (!token) {
+            throw new Error("Not signed in");
+        }
+
+        const url = `${this.portalRest}/community/self?f=json&token=${token}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.error) {
+            throw new Error(data.error.message || "API error");
+        }
+
+        // Update session with user info
+        const session = this.loadSession();
+        if (session) {
+            session.fullName = data.fullName;
+            session.userId = data.username;
+            session.organization = data.portalUrl;
+            session.orgId = data.orgId;
+            this.saveSession(session);
+        }
+
+        return data;
+    }
+}
+
+// Safe initialization function
+function initializeAuth() {
+    if (typeof window.CONFIG === 'undefined') {
+        console.error("CONFIG not loaded! Check config.js");
+        return null;
+    }
+
+    try {
+        return new ArcGISAuth(window.CONFIG);
+    } catch (error) {
+        console.error("Failed to initialize auth:", error);
+        return null;
+    }
 }
 
 // Export for use in other modules
 window.ArcGISAuth = ArcGISAuth;
+window.initializeAuth = initializeAuth;
+
+// Debug logging
+console.log("auth.js loaded, CONFIG available:", typeof window.CONFIG !== 'undefined');
