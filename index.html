@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garage Sales Control Center - City of Portland</title>
+
+    <!-- Enhanced Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net;
+        style-src 'self' 'unsafe-inline' https://unpkg.com;
+        connect-src 'self' https://*.arcgis.com https://*.esri.com https://services3.arcgis.com https://geocode-api.arcgis.com;
+        img-src 'self' data: https: blob:;
+        font-src 'self' https: data:;
+    ">
+    <meta name="referrer" content="no-referrer">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- App Configuration -->
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="appbar glass">
+        <div class="brand">
+            <div class="logo">G</div>
+            <h1>Garage Sales Control Center</h1>
+            <div class="org-badge">City of Portland</div>
+        </div>
+        <div class="actions">
+            <!-- Prominent Authentication Status -->
+            <div id="auth-section" class="auth-section">
+                <div id="signed-out-section" class="auth-prompt">
+                    <div class="auth-message">
+                        <span class="lock-icon">🔒</span>
+                        <span>Sign in required</span>
+                    </div>
+                    <button id="btnSignIn" class="btn btn-auth">Sign In with ArcGIS</button>
+                </div>
+                <div id="signed-in-section" class="auth-status" style="display:none;">
+                    <div class="user-info">
+                        <span class="user-avatar">👤</span>
+                        <div>
+                            <div id="user-name" class="user-name"></div>
+                            <div class="user-org">City of Portland</div>
+                        </div>
+                    </div>
+                    <button id="btnSignOut" class="btn btn-secondary">Sign Out</button>
+                </div>
+            </div>
+
+            <!-- App Controls -->
+            <div id="app-controls" class="app-controls" style="display:none;">
+                <select id="selFilter" class="btn btn-secondary">
+                    <option value="all">All sales</option>
+                    <option value="weekend">This weekend</option>
+                    <option value="next14">Next 2 weeks</option>
+                    <option value="past">Past sales</option>
+                </select>
+                <button id="btnSales" class="btn btn-secondary">Sales List</button>
+                <button id="btnTheme" class="btn btn-secondary">🌓</button>
+                <button id="btnGuide" class="btn btn-secondary">Guide</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sign-in Required Overlay -->
+    <div id="signin-overlay" class="signin-overlay">
+        <div class="signin-content">
+            <div class="signin-logo">🔐</div>
+            <h2>Authentication Required</h2>
+            <p>This application requires City of Portland ArcGIS credentials to add and manage garage sale locations.</p>
+            <button id="btnSignInOverlay" class="btn btn-auth btn-large">Sign In with ArcGIS</button>
+            <div class="signin-note">
+                Only City of Portland employees can access this application.
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <main id="main-content" class="layout" style="display:none;">
+        <!-- Left Panel: Form -->
+        <section class="panel form-panel glass">
+            <div class="section-title">Sale Editor</div>
+
+            <!-- Address Search -->
+            <div class="field-row">
+                <label for="addressSearch">Search Address</label>
+                <div class="search-container">
+                    <input type="text" id="addressSearch" placeholder="Enter address to search and zoom to location">
+                    <button id="btnSearch" class="btn-search">🔍</button>
+                </div>
+            </div>
+
+            <div class="field-row">
+                <label for="address">Garage Sale Address</label>
+                <input type="text" id="address" placeholder="123 Main St, Portland, TX">
+            </div>
+
+            <div class="grid-2">
+                <div class="field-row">
+                    <label for="dateStart">Start Date</label>
+                    <input type="date" id="dateStart">
+                </div>
+                <div class="field-row">
+                    <label for="dateEnd">End Date</label>
+                    <input type="date" id="dateEnd">
+                </div>
+            </div>
+
+            <!-- Multi-Day Sale Feature -->
+            <div class="checkbox">
+                <input type="checkbox" id="chkMultiDay">
+                <label for="chkMultiDay">Multi-day sale with different times</label>
+            </div>
+
+            <!-- Single Day Time Range -->
+            <div id="single-day-times" class="field-row">
+                <label>Time Range</label>
+                <div class="time-container">
+                    <div class="time-row">
+                        <span>Start:</span>
+                        <select id="timeStartHour">
+                            <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                            <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                            <option value="7" selected>7</option><option value="8">8</option><option value="9">9</option>
+                            <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                        </select>
+                        <span>:</span>
+                        <select id="timeStartMin">
+                            <option value="0" selected>00</option><option value="15">15</option>
+                            <option value="30">30</option><option value="45">45</option>
+                        </select>
+                        <select id="timeStartAmPm">
+                            <option value="AM" selected>AM</option>
+                            <option value="PM">PM</option>
+                        </select>
+                        <span class="time-separator">to</span>
+                        <select id="timeEndHour">
+                            <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>
+                            <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                            <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                            <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                        </select>
+                        <span>:</span>
+                        <select id="timeEndMin">
+                            <option value="0" selected>00</option><option value="15">15</option>
+                            <option value="30">30</option><option value="45">45</option>
+                        </select>
+                        <select id="timeEndAmPm">
+                            <option value="AM">AM</option>
+                            <option value="PM" selected>PM</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multi-Day Times (Hidden by default) -->
+            <div id="multi-day-times" class="field-row" style="display:none;">
+                <label>Sale Days & Times</label>
+                <div id="multi-day-container"></div>
+                <button id="btnAddDay" class="btn btn-secondary btn-small">+ Add Day</button>
+            </div>
+
+            <div class="field-row">
+                <label for="details">Sale Items</label>
+                <input type="text" id="details" placeholder="Books, clothes, furniture, household items, etc.">
+            </div>
+
+            <div class="field-row">
+                <label for="descriptionPreview">Description Preview (auto-generated)</label>
+                <textarea id="descriptionPreview" readonly class="description-preview"></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button id="btnSave" class="btn">Save Sale</button>
+                <button id="btnNew" class="btn btn-secondary">New Sale</button>
+                <button id="btnDelete" class="btn btn-danger">Delete</button>
+                <div class="spacer"></div>
+                <button id="btnCancel" class="btn btn-secondary" style="display:none;">Cancel</button>
+            </div>
+
+            <div class="status" id="status">
+                Click "New Sale" to add a garage sale, or click existing sales on the map to edit.
+            </div>
+        </section>
+
+        <!-- Right Panel: Map -->
+        <section class="panel map-panel glass">
+            <div id="map" class="map"></div>
+            <div class="map-footer">
+                <div id="modeChip" class="mode-chip" style="display:none;">
+                    ✨ Click map to place garage sale
+                </div>
+                <div class="map-info">
+                    <span id="coordinates">Ready</span>
+                    <span class="map-hint">💡 Use address search above to zoom to locations</span>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Load JavaScript Libraries -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Load main application -->
+    <script src="app.js"></script>
+</body>
+</html>
