@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Completing ArcGIS OAuth…</title>
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        connect-src 'self' https://*.arcgis.com https://*.esri.com;
+        img-src 'self' data: https:;
+        font-src 'self' https: data:;
+    ">
+    <meta name="referrer" content="no-referrer">
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: #0b1118;
+            color: #f0f6ff;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            text-align: center;
+            max-width: 500px;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top: 3px solid #3cf0d4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #log {
+            background: rgba(255,255,255,.1);
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-top: 1rem;
+            text-align: left;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .error {
+            color: #ff6b6b;
+        }
+    </style>
+    <script src="config.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>Finishing sign-in…</h1>
+        <p>If this seems stuck, you can refresh this page.</p>
+        <pre id="log"></pre>
+    </div>
+
+    <script>
+        // callback.js — completes PKCE, with state verification and cleanup
+        const STORAGE_KEY = "garage_sale_auth_session_v1";
+        const PKCE_KEY = "garage_sale_pkce_data_v1";
+
+        const logEl = document.getElementById("log");
+        const log = (m, isError = false) => { 
+            logEl.textContent += (m + "\n"); 
+            if (isError) logEl.className = "error";
+        };
+
+        function buildRedirectUri(filename = "callback.html") {
+            const base = location.origin + location.pathname.replace(/[^/]*$/, "");
+            return base + filename;
+        }
+
+        const RUNTIME = {
+            portalRest: (CONFIG.PORTAL || "https://www.arcgis.com/sharing/rest").replace(/\/$/, ""),
+            oauthBase() { return this.portalRest + "/oauth2"; },
+            redirectUri: buildRedirectUri("callback.html"),
+            clientId: CONFIG.CLIENT_ID
+        };
+
+        function parseQuery() {
+            const u = new URL(window.location.href);
+            return Object.fromEntries(u.searchParams.entries());
+        }
+
+        async function exchangeCodeForToken(code, verifier) {
+            const url = RUNTIME.oauthBase() + "/token";
+            const params = new URLSearchParams();
+            params.set("grant_type", "authorization_code");
+            params.set("client_id", RUNTIME.clientId);
+            params.set("code", code);
+            params.set("code_verifier", verifier);
+            params.set("redirect_uri", RUNTIME.redirectUri);
+
+            const res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: params
+            });
+
+            if (!res.ok) {
+                const t = await res.text();
+                throw new Error("Token exchange failed: " + res.status + " " + t);
+            }
+
+            return res.json();
+        }
+
+        (async () => {
+            try {
+                log("Processing OAuth callback...");
+
+                const q = parseQuery();
+                const store = JSON.parse(sessionStorage.getItem(PKCE_KEY) || "{}");
+
+                if (!q.code) throw new Error("Missing authorization code.");
+                if (!store.verifier) throw new Error("Missing PKCE verifier in session.");
+                if (q.state !== store.state) throw new Error("State mismatch - possible CSRF attack.");
+
+                log("Exchanging code for token...");
+                const token = await exchangeCodeForToken(q.code, store.verifier);
+
+                const now = Math.floor(Date.now() / 1000);
+                const sess = {
+                    access_token: token.access_token,
+                    expires_at: now + (token.expires_in || 0),
+                    username: token.username || null,
+                    userId: token.userId || null,
+                    fullName: token.fullName || null
+                };
+
+                sessionStorage.setItem(STORAGE_KEY, JSON.stringify(sess));
+                log("Session stored successfully.");
+
+                // Clean up PKCE data ASAP
+                sessionStorage.removeItem(PKCE_KEY);
+
+                const back = store.post || (location.origin + location.pathname.replace("callback.html", ""));
+                log("Success. Redirecting to: " + back);
+
+                setTimeout(() => {
+                    location.replace(back);
+                }, 1000);
+
+            } catch (e) {
+                log("OAuth error: " + (e?.message || e), true);
+                log("\nCheck that your ArcGIS app allows this redirect URL:", true);
+                log(buildRedirectUri("callback.html"), true);
+                log("\nYou can close this tab and try again.", true);
+            }
+        })();
+    </script>
+</body>
+</html>

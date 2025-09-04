@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garage Sales Control Center</title>
+
+    <!-- Enhanced Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline' https://js.arcgis.com;
+        style-src 'self' 'unsafe-inline' https://js.arcgis.com;
+        connect-src 'self' https://*.arcgis.com https://*.esri.com https://services3.arcgis.com;
+        img-src 'self' data: https:;
+        font-src 'self' https: data:;
+        worker-src 'self' blob:;
+        child-src 'self' blob:;
+    ">
+    <meta name="referrer" content="no-referrer">
+
+    <!-- App Configuration -->
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="appbar glass">
+        <div class="brand">
+            <div class="logo">G</div>
+            <h1>Garage Sales Control Center</h1>
+        </div>
+        <div class="actions">
+            <!-- Authentication Status -->
+            <div id="auth-status" class="auth-status">
+                <span id="user-info" style="display:none;"></span>
+                <button id="btnSignIn" class="btn btn-secondary" style="display:none;">Sign In</button>
+                <button id="btnSignOut" class="btn btn-secondary" style="display:none;">Sign Out</button>
+            </div>
+
+            <!-- Filter -->
+            <select id="selFilter" class="btn btn-secondary">
+                <option value="all">All sales</option>
+                <option value="weekend">This weekend</option>
+                <option value="next14">Next 2 weeks</option>
+                <option value="past">Past sales</option>
+            </select>
+
+            <!-- Actions -->
+            <button id="btnSales" class="btn btn-secondary">Sales</button>
+            <button id="btnTheme" class="btn btn-secondary">🌓</button>
+            <button id="btnGuide" class="btn btn-secondary">Guide</button>
+            <button id="btnAdmin" class="btn btn-secondary">Admin</button>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="layout">
+        <!-- Left Panel: Form -->
+        <section class="panel form-panel glass">
+            <div class="section-title">Sale Editor</div>
+            <div class="section-subtitle" id="auth-message">
+                Sign in with your ArcGIS account to add and edit garage sales.
+            </div>
+
+            <div class="field-row">
+                <label for="address">Address</label>
+                <input type="text" id="address" placeholder="123 Main St, City, TX">
+            </div>
+
+            <div class="grid-2">
+                <div class="field-row">
+                    <label for="dateStart">Start Date</label>
+                    <input type="date" id="dateStart">
+                </div>
+                <div class="field-row">
+                    <label for="dateEnd">End Date</label>
+                    <input type="date" id="dateEnd">
+                </div>
+            </div>
+
+            <div class="field-row">
+                <label>Time range</label>
+                <div class="grid-2">
+                    <div class="time-row">
+                        <span>Start</span>
+                        <input type="number" id="timeStartHour" min="1" max="12" value="9">
+                        <span>:</span>
+                        <input type="number" id="timeStartMin" min="0" max="59" value="0" step="15">
+                        <select id="timeStartAmPm">
+                            <option>AM</option>
+                            <option>PM</option>
+                        </select>
+                    </div>
+                    <div class="time-row">
+                        <span>End</span>
+                        <input type="number" id="timeEndHour" min="1" max="12" value="2">
+                        <span>:</span>
+                        <input type="number" id="timeEndMin" min="0" max="59" value="0" step="15">
+                        <select id="timeEndAmPm">
+                            <option>AM</option>
+                            <option selected>PM</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="checkbox">
+                <input type="checkbox" id="chkCompose" checked>
+                <label for="chkCompose">Compose Description from time + details</label>
+            </div>
+
+            <div class="field-row">
+                <label for="details">Sale details</label>
+                <input type="text" id="details" placeholder="Books, clothes, furniture, etc.">
+            </div>
+
+            <div class="field-row">
+                <label for="descriptionRaw">Description (saved to layer)</label>
+                <textarea id="descriptionRaw" readonly></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button id="btnSave" class="btn">Save</button>
+                <button id="btnNew" class="btn btn-secondary">New</button>
+                <button id="btnDelete" class="btn btn-danger">Delete</button>
+                <div class="spacer"></div>
+                <button id="btnCancel" class="btn btn-secondary" style="display:none;">Cancel</button>
+            </div>
+
+            <div class="status" id="status">
+                Click a sale to edit, or click <strong>New</strong> to place a new one.
+            </div>
+        </section>
+
+        <!-- Right Panel: Map -->
+        <section class="panel map-panel glass">
+            <div id="map" class="map"></div>
+            <div class="map-footer">
+                <span id="modeChip" class="mode-chip" style="display:none;">
+                    Add mode — move the cursor and click to place
+                </span>
+                <span id="coordinates">Lon: — • Lat: —</span>
+                <span class="map-hint">Tip: Search an address, then click to fine-tune.</span>
+            </div>
+        </section>
+    </main>
+
+    <!-- Loading indicator for non-JS users -->
+    <noscript>
+        <div style="text-align:center;padding:2rem;color:#f0f6ff;">
+            This app requires JavaScript.
+        </div>
+    </noscript>
+
+    <!-- Load main application -->
+    <script src="app.js"></script>
+</body>
+</html>
