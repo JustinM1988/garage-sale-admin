@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Callback Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #0f172a;
+            color: #f1f5f9;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 2rem;
+            border-radius: 12px;
+        }
+        .success { color: #10b981; }
+        .error { color: #ef4444; }
+        .info { color: #3b82f6; }
+        .code { 
+            background: rgba(0,0,0,0.3); 
+            padding: 0.5rem; 
+            border-radius: 4px; 
+            word-break: break-all;
+            margin: 0.5rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 OAuth Callback Test</h1>
+        <p>This page shows what happens when ArcGIS redirects back to your app.</p>
+
+        <h3>Current URL:</h3>
+        <div class="code" id="currentUrl"></div>
+
+        <h3>URL Parameters:</h3>
+        <div id="params"></div>
+
+        <h3>Status:</h3>
+        <div id="status"></div>
+
+        <h3>Next Steps:</h3>
+        <div id="nextSteps"></div>
+    </div>
+
+    <script>
+        document.getElementById('currentUrl').textContent = window.location.href;
+
+        const params = new URLSearchParams(window.location.search);
+        const paramsDiv = document.getElementById('params');
+        const statusDiv = document.getElementById('status');
+        const nextStepsDiv = document.getElementById('nextSteps');
+
+        if (params.size === 0) {
+            paramsDiv.innerHTML = '<div class="info">No parameters - this means you reached the callback but ArcGIS didn't redirect here.</div>';
+            statusDiv.innerHTML = '<div class="error">❌ OAuth flow not completed</div>';
+            nextStepsDiv.innerHTML = '<div>This means the redirect URI is working, but the OAuth authorization failed. Check your ArcGIS OAuth app configuration.</div>';
+        } else {
+            let paramsList = '';
+            for (const [key, value] of params) {
+                paramsList += `<div><strong>${key}:</strong> <span class="code">${value}</span></div>`;
+            }
+            paramsDiv.innerHTML = paramsList;
+
+            if (params.has('code')) {
+                statusDiv.innerHTML = '<div class="success">✅ OAuth authorization successful!</div>';
+                nextStepsDiv.innerHTML = '<div>Great! You received an authorization code. The redirect URI is working correctly.</div>';
+            } else if (params.has('error')) {
+                statusDiv.innerHTML = `<div class="error">❌ OAuth error: ${params.get('error')}</div>`;
+                nextStepsDiv.innerHTML = '<div>OAuth authorization was denied or failed. Check your ArcGIS OAuth app permissions.</div>';
+            } else {
+                statusDiv.innerHTML = '<div class="info">⚠️ Unexpected parameters</div>';
+                nextStepsDiv.innerHTML = '<div>Received unexpected parameters. Check your OAuth configuration.</div>';
+            }
+        }
+
+        console.log('Callback test loaded');
+        console.log('URL params:', Object.fromEntries(params));
+    </script>
+</body>
+</html>
