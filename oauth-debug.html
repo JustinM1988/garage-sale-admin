@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Debug - Find Your Redirect URL</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: #0b1118;
+            color: #f0f6ff;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        .debug-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(24, 30, 44, 0.8);
+            padding: 2rem;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .url-display {
+            background: rgba(60, 240, 212, 0.1);
+            border: 1px solid #3cf0d4;
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            word-break: break-all;
+            margin: 1rem 0;
+        }
+        .copy-btn {
+            background: #3cf0d4;
+            color: #041311;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        .steps {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+        .steps ol {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+        .steps li {
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔍 OAuth Debug Tool</h1>
+        <p>Use this page to find the exact redirect URL you need to register in your ArcGIS OAuth application.</p>
+
+        <h3>Your Current Page URL:</h3>
+        <div class="url-display" id="currentUrl"></div>
+
+        <h3>Required Redirect URL for ArcGIS:</h3>
+        <div class="url-display" id="redirectUrl"></div>
+        <button class="copy-btn" onclick="copyRedirectUr
